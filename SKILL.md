@@ -184,4 +184,6 @@ Load only the template needed for the current phase:
 - Archival reference: `scripts/archival.py`
 - Cleanup classification reference: `scripts/cleanup.py`
 - Local helper CLI: `scripts/threadweave.py`
+- Host adapter interface: `scripts/host_adapter.py`
+- Controller skeleton: `scripts/controller.py`
 - Final leader report: `references/final-report-template.md`
