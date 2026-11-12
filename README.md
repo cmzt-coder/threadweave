@@ -108,3 +108,6 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 ## First iteration and validation
 
 See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols and templates, not an executable controller; local Git checks do not replace a real-thread smoke test.
+## License
+
+MIT License. See [LICENSE](LICENSE).

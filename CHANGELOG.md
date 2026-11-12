@@ -21,9 +21,12 @@
   managed worktree 生命周期。
 - `tests/run_all.py` 汇总 12 套 smoke 测试，181 项断言通过。
 
+### License
+
+MIT License. See [LICENSE](LICENSE).
+
 ### Known limitations
 
 - 未验证：多 projectId 匹配、create 超时、隐藏可选工具环境、真实错误启动报告注入、
   完整真实恢复流程。
-- 原项目压缩包与新项目均无 `LICENSE` / `COPYING` / `NOTICE`，授权不明确。
 - 尚未配置 remote、CI、版本 tag 或发布 URL。
