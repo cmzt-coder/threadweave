@@ -64,7 +64,7 @@ class Controller:
 
     def _ensure_external_action_allowed(self, worker, action):
         run_status = self.state.get('status')
-        if run_status in ('aborted', 'failed', 'complete'):
+        if run_status in ('aborted', 'failed', 'complete', 'cleanup_pending'):
             raise RuntimeError(f'run is {run_status}; {action} blocked')
         if worker.get('stopStatus') in ('requested', 'confirmed'):
             raise RuntimeError(
@@ -93,6 +93,14 @@ class Controller:
     def transition_worker(self, role, attempt, new_status):
         worker = self._worker(role, attempt)
         validate_transition('worker', worker['state'], new_status)
+        if new_status == 'integrated':
+            if not worker.get('report'):
+                raise RuntimeError('cannot integrate without accepted report')
+            if not any(
+                entry.get('branch') == worker.get('branch') and entry.get('result') == 'merged'
+                for entry in self.state.get('integrationLog', [])
+            ):
+                raise RuntimeError('cannot integrate without integration log')
         worker['state'] = new_status
         self.save()
 
@@ -190,6 +198,66 @@ class Controller:
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']
 
+    def accept_report(self, role, attempt, report):
+        """接收报告并绑定 thread/branch/head/reportSha/taskRevision。"""
+        worker = self._worker(role, attempt)
+        if worker['state'] not in ('running', 'blocked'):
+            raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected running/blocked')
+        required = ('threadId', 'branch', 'head', 'reportSha', 'taskRevision', 'baseIsAncestor')
+        for field in required:
+            if field not in report:
+                raise ValueError(f'report missing {field}')
+        if report['threadId'] != worker.get('threadId'):
+            raise RuntimeError('report threadId mismatch')
+        if report['branch'] != worker.get('branch'):
+            raise RuntimeError('report branch mismatch')
+        if report['taskRevision'] != worker.get('activityRevision', 0):
+            raise RuntimeError('report belongs to an older task revision')
+        if worker.get('branchTip') and report['head'] != worker['branchTip']:
+            raise RuntimeError('report head does not match branch tip')
+        if not report['baseIsAncestor']:
+            raise RuntimeError('report base is not an ancestor of head')
+        worker['report'] = {
+            'threadId': report['threadId'],
+            'branch': report['branch'],
+            'head': report['head'],
+            'reportSha': report['reportSha'],
+            'taskRevision': report['taskRevision'],
+            'baseIsAncestor': report['baseIsAncestor'],
+            'acceptedAt': _now_iso(),
+        }
+        worker['state'] = 'reported'
+        self.save()
+        return worker['report']
+
+    def integrate(self, role, attempt, merge_commit, verification):
+        """记录一次报告审查/集成结果；失败时阻止后续集成。"""
+        worker = self._worker(role, attempt)
+        if worker['state'] != 'reported':
+            raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected reported')
+        report = worker.get('report')
+        if not report:
+            raise RuntimeError('report not accepted')
+        if not verification:
+            raise RuntimeError('verification required')
+        if verification.startswith('FAIL'):
+            self.state.setdefault('integrationLog', []).append({
+                'branch': worker.get('branch'),
+                'mergeCommit': None,
+                'result': 'failed',
+                'verification': verification,
+            })
+            self.save()
+            raise RuntimeError('integration verification failed')
+        self.state.setdefault('integrationLog', []).append({
+            'branch': worker.get('branch'),
+            'mergeCommit': merge_commit,
+            'result': 'merged',
+            'verification': verification,
+        })
+        self.transition_worker(role, attempt, 'integrated')
+        return self.state['integrationLog'][-1]
+
     def request_stop(self, role, attempt):
         """记录停止请求；不代表线程已停止。"""
         worker = self._worker(role, attempt)
@@ -278,9 +346,11 @@ class Controller:
 
     def create_worker(self, prompt, project_id, timeout_seconds=300):
         """创建 worker；超时记录证据后抛出，不自动重试或发送消息。"""
-        if self.state.get('status') in ('aborted', 'failed', 'complete'):
+        if self.state.get('status') in ('aborted', 'failed', 'complete', 'cleanup_pending'):
             raise RuntimeError(
                 f'run is {self.state.get("status")}; create_worker blocked')
+        if not self.state.get('authorization', {}).get('provenance'):
+            raise RuntimeError('authorization provenance missing; create_worker blocked')
         try:
             if getattr(self.adapter, 'capabilities', {}).get('create_timeout'):
                 return self.adapter.create_worker(

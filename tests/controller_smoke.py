@@ -600,6 +600,99 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('missing-worktree-rejected', True)
 
+    report_state = make_state('run-report')
+    report_state['workers'][0]['state'] = 'running'
+    report_state['workers'][0]['activityRevision'] = 1
+    report_state['workers'][0]['branchTip'] = 'b' * 40
+    report_controller = Controller(FakeAdapter(), d, 'run-report', report_state)
+    report_payload = {
+        'threadId': 't-a', 'branch': 'tw/a-1',
+        'head': 'b' * 40, 'reportSha': 'c' * 64,
+        'taskRevision': 1, 'baseIsAncestor': True,
+    }
+    report_controller.accept_report('a', 1, report_payload)
+    report_saved = read_state(run_state_path(d, 'run-report'))
+    check('accept-report-recorded', report_saved['workers'][0]['state'] == 'reported')
+    check('accept-report-sha', report_saved['workers'][0]['report']['reportSha'] == 'c' * 64)
+
+    bad_sha_state = make_state('run-bad-sha')
+    bad_sha_state['workers'][0]['state'] = 'running'
+    bad_sha_state['workers'][0]['activityRevision'] = 1
+    bad_sha_state['workers'][0]['branchTip'] = 'd' * 40
+    bad_sha_controller = Controller(FakeAdapter(), d, 'run-bad-sha', bad_sha_state)
+    try:
+        bad_sha_controller.accept_report('a', 1, report_payload)
+        check('report-head-mismatch-rejected', False)
+    except RuntimeError:
+        check('report-head-mismatch-rejected', True)
+
+    old_report_state = make_state('run-old-report')
+    old_report_state['workers'][0]['state'] = 'running'
+    old_report_state['workers'][0]['activityRevision'] = 1
+    old_report_state['workers'][0]['branchTip'] = 'b' * 40
+    old_report_controller = Controller(FakeAdapter(), d, 'run-old-report', old_report_state)
+    try:
+        old_report_controller.accept_report('a', 1, dict(report_payload, taskRevision=0))
+        check('old-report-rejected', False)
+    except RuntimeError:
+        check('old-report-rejected', True)
+
+    report_controller.integrate('a', 1, 'e' * 40, 'tests passed')
+    integrated_saved = read_state(run_state_path(d, 'run-report'))
+    check('integrate-worker-state', integrated_saved['workers'][0]['state'] == 'integrated')
+    check('integration-log-recorded',
+          integrated_saved['integrationLog'][0]['result'] == 'merged')
+
+    no_log_state = make_state('run-no-log')
+    no_log_state['workers'][0]['state'] = 'reported'
+    no_log_state['workers'][0]['report'] = dict(
+        report_payload, acceptedAt='2026-11-12T10:00:00+08:00')
+    no_log_controller = Controller(FakeAdapter(), d, 'run-no-log', no_log_state)
+    try:
+        no_log_controller.transition_worker('a', 1, 'integrated')
+        check('integrated-without-log-rejected', False)
+    except RuntimeError:
+        check('integrated-without-log-rejected', True)
+
+    fail_integration_state = make_state('run-fail-integration')
+    fail_integration_state['workers'][0]['state'] = 'running'
+    fail_integration_state['workers'][0]['activityRevision'] = 1
+    fail_integration_state['workers'][0]['branchTip'] = 'b' * 40
+    fail_integration_controller = Controller(
+        FakeAdapter(), d, 'run-fail-integration', fail_integration_state)
+    fail_integration_controller.accept_report('a', 1, report_payload)
+    try:
+        fail_integration_controller.integrate('a', 1, None, 'FAIL: tests failed')
+        check('integration-failure-raised', False)
+    except RuntimeError:
+        check('integration-failure-raised', True)
+    fail_saved = read_state(run_state_path(d, 'run-fail-integration'))
+    check('integration-failure-recorded',
+          fail_saved['integrationLog'][0]['result'] == 'failed')
+    check('integration-failure-worker-reported',
+          fail_saved['workers'][0]['state'] == 'reported')
+
+    cleanup_state = make_state('run-cleanup-pending')
+    cleanup_state['status'] = 'cleanup_pending'
+    cleanup_controller = Controller(FakeAdapter(), d, 'run-cleanup-pending', cleanup_state)
+    try:
+        cleanup_controller.dispatch(
+            'a', 1, 'cleanup', startup_report=good_report, expected=expected)
+        check('cleanup-pending-dispatch-rejected', False)
+    except RuntimeError:
+        check('cleanup-pending-dispatch-rejected', True)
+
+    no_auth_state = make_state('run-no-auth')
+    no_auth_state['authorization'] = {'provenance': '', 'messagingScope': ''}
+    no_auth_adapter = FakeAdapter()
+    no_auth_controller = Controller(no_auth_adapter, d, 'run-no-auth', no_auth_state)
+    try:
+        no_auth_controller.create_worker('prompt', 'p1')
+        check('missing-authorization-create-rejected', False)
+    except RuntimeError:
+        check('missing-authorization-create-rejected', True)
+    check('missing-authorization-no-adapter-call', not no_auth_adapter.calls)
+
     bad_state = make_state('run-bad')
     bad_state['status'] = 'not-a-status'
     bad_controller = Controller(FakeAdapter(), d, 'run-bad', bad_state)

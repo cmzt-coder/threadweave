@@ -425,6 +425,52 @@
           "graceDeadline": {
             "type": "string",
             "format": "date-time"
+          },
+          "branchTip": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "report": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "threadId",
+              "branch",
+              "head",
+              "reportSha",
+              "taskRevision",
+              "baseIsAncestor",
+              "acceptedAt"
+            ],
+            "properties": {
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "reportSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "taskRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "baseIsAncestor": {
+                "type": "boolean"
+              },
+              "acceptedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
           }
         }
       }
