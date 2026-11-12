@@ -181,4 +181,5 @@ Load only the template needed for the current phase:
 - Machine-readable state: `references/state.schema.json` and `references/state.example.json`
 - State store reference: `scripts/state_store.py`
 - Recovery classification reference: `scripts/recovery.py`
+- Archival reference: `scripts/archival.py`
 - Final leader report: `references/final-report-template.md`
