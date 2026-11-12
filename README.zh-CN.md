@@ -57,7 +57,7 @@ skill 自带的校准例子:**好的拆分**——一个 worker 写 API 端点,�
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-git clone <your-threadweave-repository-url> "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
+git clone https://github.com/cmzt-coder/threadweave.git "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
 ```
 
 更新:进入该目录执行 `git pull`。

@@ -57,7 +57,7 @@ Clone into your Codex skills directory as `threadweave`:
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-git clone <your-threadweave-repository-url> "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
+git clone https://github.com/cmzt-coder/threadweave.git "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
 ```
 
 To update, run `git pull` inside that directory.

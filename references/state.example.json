@@ -7,13 +7,13 @@
   "project": {
     "projectId": "17c15c15-611c-4c43-9511-8c5eceab2d66",
     "hostId": "local",
-    "canonicalRepositoryRoot": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave",
-    "commonDirectory": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave/.git"
+    "canonicalRepositoryRoot": "<repo-root>",
+    "commonDirectory": "<repo-root>/.git"
   },
   "integration": {
     "baseSha": "3ff1931e3f2b04d7da0e853d2fb49f0cc47e9562",
     "branch": "threadweave/20261112-real-dual-02/integration",
-    "repoPath": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave"
+    "repoPath": "<repo-root>"
   },
   "authorization": {
     "provenance": "direct request from the user in the current Codex task",
@@ -40,7 +40,7 @@
         "operationId": null,
         "pendingWorktreeId": null
       },
-      "worktree": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/a",
+      "worktree": "<worktree-root>/20261112-real-dual-02/a",
       "createdAt": "2026-11-12T13:42:00+08:00",
       "deadline": "2026-11-12T13:47:00+08:00",
       "lastObservation": "2026-11-12T13:48:00+08:00",
@@ -58,7 +58,7 @@
         "operationId": null,
         "pendingWorktreeId": null
       },
-      "worktree": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/b",
+      "worktree": "<worktree-root>/20261112-real-dual-02/b",
       "createdAt": "2026-11-12T13:42:00+08:00",
       "deadline": "2026-11-12T13:47:00+08:00",
       "lastObservation": "2026-11-12T13:48:00+08:00",
@@ -80,13 +80,13 @@
     },
     {
       "type": "worktree",
-      "id": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/a",
+      "id": "<worktree-root>/20261112-real-dual-02/a",
       "owner": "a",
       "status": "removed"
     },
     {
       "type": "worktree",
-      "id": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/b",
+      "id": "<worktree-root>/20261112-real-dual-02/b",
       "owner": "b",
       "status": "removed"
     }
