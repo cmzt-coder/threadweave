@@ -188,4 +188,5 @@ Load only the template needed for the current phase:
 - Controller skeleton: `scripts/controller.py`
 - Structured run log: `scripts/run_log.py`
 - Budget/stall reference: `scripts/budget.py`
+- Host compatibility matrix: `docs/宿主兼容矩阵.md`
 - Final leader report: `references/final-report-template.md`
