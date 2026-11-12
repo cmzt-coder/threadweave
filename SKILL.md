@@ -179,4 +179,5 @@ Load only the template needed for the current phase:
 - Worker completion report: `references/worker-report-template.md`
 - Leader state tracking: `references/leader-state-template.md`
 - Machine-readable state: `references/state.schema.json` and `references/state.example.json`
+- State store reference: `scripts/state_store.py`
 - Final leader report: `references/final-report-template.md`
