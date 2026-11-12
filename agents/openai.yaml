@@ -1,0 +1,4 @@
+interface:
+  display_name: "Thread Team"
+  short_description: "Coordinate leader and worker threads"
+  default_prompt: "Use $thread-team to split this task across a leader thread and collaborating worker threads."
