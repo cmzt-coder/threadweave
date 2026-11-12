@@ -5,6 +5,8 @@
 """
 from datetime import datetime
 
+TERMINAL_STATES = {'archived', 'failed', 'cancelled', 'integrated'}
+
 
 def _as_datetime(value):
     return value if isinstance(value, datetime) else datetime.fromisoformat(value)
@@ -17,16 +19,19 @@ def check_initialization(created_at, now, limit_seconds=300):
     return {'status': status, 'elapsedSeconds': elapsed}
 
 
-def check_stall(last_activity, now, inactivity_seconds=360, grace_seconds=120):
-    """六分钟无活动请求状态，再过两分钟宽限仍无活动判定停滞。"""
-    elapsed = (_as_datetime(now) - _as_datetime(last_activity)).total_seconds()
-    if elapsed >= inactivity_seconds + grace_seconds:
-        status = 'stalled'
-    elif elapsed >= inactivity_seconds:
-        status = 'request_status'
-    else:
-        status = 'ok'
-    return {'status': status, 'elapsedSeconds': elapsed}
+def check_stall(last_progress_at, now, inactivity_seconds=360, grace_seconds=120,
+                status_requested_at=None, worker_state=None):
+    """区分无活动请求、宽限期与停滞；终态不适用。"""
+    if worker_state in TERMINAL_STATES:
+        return {'status': 'not_applicable', 'elapsedSeconds': 0}
+    if status_requested_at is not None:
+        grace_elapsed = (_as_datetime(now) - _as_datetime(status_requested_at)).total_seconds()
+        status = 'stalled' if grace_elapsed >= grace_seconds else 'grace'
+        return {'status': status, 'graceElapsedSeconds': grace_elapsed}
+    elapsed = (_as_datetime(now) - _as_datetime(last_progress_at)).total_seconds()
+    if elapsed >= inactivity_seconds:
+        return {'status': 'request_status', 'elapsedSeconds': elapsed}
+    return {'status': 'ok', 'elapsedSeconds': elapsed}
 
 
 def check_retry(attempt, replacement_limit=1):
@@ -58,14 +63,16 @@ def summarize_budget(state, observations, now,
         key = f"{worker.get('role')}#{worker.get('attempt')}"
         observed = observations.get(key, {})
         created_at = worker.get('createdAt')
-        last_activity = worker.get('lastObservation')
+        last_progress = worker.get('lastProgressAt') or worker.get('lastObservation')
+        status_requested = worker.get('statusRequestedAt')
         summary[key] = {
             'initialization': (
                 check_initialization(created_at, now, initialization_limit)
                 if created_at else {'status': 'unknown'}),
             'stall': (
-                check_stall(last_activity, now, inactivity, grace)
-                if last_activity else {'status': 'unknown'}),
+                check_stall(last_progress, now, inactivity, grace,
+                            status_requested, worker.get('state'))
+                if last_progress else {'status': 'unknown'}),
             'retry': check_retry(worker.get('attempt', 1), replacement_limit),
         }
     return summary

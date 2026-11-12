@@ -29,8 +29,8 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-') as d:
 
     entries = archive_artifacts(run_dir, 'a', {'report.md': report, 'notes.md': notes})
     check('archive-two-entries', len(entries) == 2)
-    target_report = run_dir / 'reports' / 'a' / 'report.md'
-    target_notes = run_dir / 'reports' / 'a' / 'notes.md'
+    target_report = run_dir / 'reports' / 'a' / '1' / '1' / 'report.md'
+    target_notes = run_dir / 'reports' / 'a' / '1' / '1' / 'notes.md'
     check('archive-report-exists', target_report.is_file())
     check('archive-notes-exists', target_notes.is_file())
     check('archive-outside-worker', not str(target_report).startswith(str(worker)))
@@ -72,6 +72,16 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-') as d:
     manifest = json.loads((run_dir / 'archive-manifest.json').read_text(encoding='utf-8'))
     names = [e['name'] for e in manifest if e['role'] == 'a']
     check('archive-idempotent', len(names) == len(set(names)))
+
+    attempt2_source = worker / 'report-attempt2.md'
+    attempt2_source.write_text('# Attempt 2' + chr(10), encoding='utf-8')
+    archive_artifacts(run_dir, 'a', {'report.md': attempt2_source}, attempt=2, revision=1)
+    target_attempt2 = run_dir / 'reports' / 'a' / '2' / '1' / 'report.md'
+    check('archive-attempt2-exists', target_attempt2.is_file())
+    check('archive-attempts-isolated',
+          target_report.read_text(encoding='utf-8') != target_attempt2.read_text(encoding='utf-8'))
+    check('verify-multi-attempt',
+          verify_archive(run_dir, [('a', 1, 1, 'report.md'), ('a', 2, 1, 'report.md')]) == [])
 
 print(json.dumps({
     'passed': len(results),

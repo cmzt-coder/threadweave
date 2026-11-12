@@ -105,7 +105,9 @@ If an explicitly requested model/reasoning is unavailable, creation fails before
 ## State, recovery, and cleanup
 
 - State directory: `.threadweave/<run-id>/`, ignored by `.gitignore`.
-- Structured state: `state.json`; reports and notes: `reports/<role>/`.
+- Machine state source: `state.json`; `state.md` is a human-readable derived view.
+- Reports and notes: `reports/<role>/<attempt>/<revision>/`.
+- Read-only diagnostics: `python3 scripts/threadweave.py inspect --repo .` and `doctor --repo .`.
 - Recovery classification: `scripts/recovery.py` returns `skip/recreate/block/revalidate/reuse`.
 - Cleanup checks worktree cleanliness, branch merge status, archived reports, and worker idle state.
 - Never force-remove an active primary checkout. Switch the thread back to Local first, then use non-force `git worktree remove`.

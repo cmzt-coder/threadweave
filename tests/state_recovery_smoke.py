@@ -58,6 +58,13 @@ with tempfile.TemporaryDirectory(prefix='threadweave-recovery-') as d:
     runs = locate_runs(repo)
     check('broken-state-marked',
           any(r['runId'] == 'run-broken' and r['status'] == 'unreadable' for r in runs))
+
+    array_state = run_state_dir(repo, 'run-array') / 'state.json'
+    array_state.parent.mkdir(parents=True, exist_ok=True)
+    array_state.write_text('[]', encoding='utf-8')
+    runs = locate_runs(repo)
+    check('array-state-marked-unreadable',
+          any(r['runId'] == 'run-array' and r['status'] == 'unreadable' for r in runs))
     latest = latest_incomplete_run(repo)
     check('broken-state-not-latest',
           latest is not None and latest['runId'] == 'run-1')

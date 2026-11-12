@@ -279,12 +279,36 @@ with tempfile.TemporaryDirectory() as d:
 
     try:
         controller.replace_worker('a', 1, replacement_limit=1)
+        check('replace-without-stop-rejected', False)
+    except RuntimeError:
+        check('replace-without-stop-rejected', True)
+
+    controller.request_stop('a', 1)
+    try:
+        controller.confirm_stop('a', 1, idle=False, final_answer_present=True, no_active_turn=True)
+        check('incomplete-stop-rejected', False)
+    except RuntimeError:
+        check('incomplete-stop-rejected', True)
+    controller.confirm_stop('a', 1, idle=True, final_answer_present=True, no_active_turn=True)
+    check('stop-confirmed',
+          read_state(run_state_path(d, 'run-1'))['workers'][0]['stopStatus'] == 'confirmed')
+    try:
+        controller.replace_worker('a', 1, replacement_limit=1)
         check('replace-first-ok', True)
     except RuntimeError:
         check('replace-first-ok', False)
 
+    rework_state = make_state()
+    rework_state['workers'][0]['state'] = 'reported'
+    rework_controller = Controller(FakeAdapter(), d, 'run-rework', rework_state)
+    rework_controller.rework('a', 1, notes='fix review findings')
+    rework_saved = read_state(run_state_path(d, 'run-rework'))
+    check('rework-transition', rework_saved['workers'][0]['state'] == 'running')
+    check('rework-count', rework_saved['workers'][0]['reworkCount'] == 1)
+
     state2 = make_state()
     state2['workers'][0]['attempt'] = 2
+    state2['workers'][0]['stopStatus'] = 'confirmed'
     controller2 = Controller(FakeAdapter(), d, 'run-2', state2)
     try:
         controller2.replace_worker('a', 2, replacement_limit=1)

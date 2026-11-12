@@ -29,7 +29,16 @@ check('stall-ok',
 check('stall-request-status',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:07:00+08:00')['status'] == 'request_status')
 check('stall-stalled',
-      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00')['status'] == 'stalled')
+      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00',
+                  status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'stalled')
+check('stall-grace',
+      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:08:00+08:00',
+                  status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'grace')
+check('stall-terminal-not-applicable',
+      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T11:00:00+08:00',
+                  worker_state='archived')['status'] == 'not_applicable')
+check('stall-new-progress-ok',
+      check_stall('2026-11-12T10:08:00+08:00', '2026-11-12T10:09:00+08:00')['status'] == 'ok')
 
 check('retry-first-ok', check_retry(1, 1)['status'] == 'ok')
 check('retry-over-limit-blocked', check_retry(2, 1)['status'] == 'blocked')

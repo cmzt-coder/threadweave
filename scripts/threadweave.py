@@ -39,6 +39,39 @@ def status(repo):
     return {'runs': locate_runs(repo), 'latestIncomplete': latest_incomplete_run(repo)}
 
 
+def inspect(repo):
+    """只读列出每个 run 的关键状态。"""
+    details = []
+    for run in locate_runs(repo):
+        try:
+            state = read_state(run['path'])
+        except (OSError, ValueError):
+            details.append({'runId': run['runId'], 'status': 'unreadable'})
+            continue
+        if not isinstance(state, dict):
+            details.append({'runId': run['runId'], 'status': 'unreadable'})
+            continue
+        details.append({
+            'runId': run['runId'],
+            'status': state.get('status'),
+            'revision': state.get('revision', 0),
+            'workers': [
+                {'role': w.get('role'), 'attempt': w.get('attempt'), 'state': w.get('state')}
+                for w in state.get('workers', [])
+            ],
+        })
+    return {'runs': details}
+
+
+def doctor(repo):
+    """只读诊断状态目录，返回问题列表。"""
+    problems = []
+    for run in locate_runs(repo):
+        if run['status'] == 'unreadable':
+            problems.append(f"{run['runId']}: unreadable state")
+    return {'ok': not problems, 'problems': problems}
+
+
 def cleanup_plan(repo, run_id, observations_path):
     """读取状态与观察，输出清理计划；不执行删除。"""
     state = read_state(run_state_path(repo, run_id))
@@ -55,6 +88,10 @@ def main(argv=None):
     p.add_argument('--repo', default='.')
     p = sub.add_parser('status')
     p.add_argument('--repo', default='.')
+    p = sub.add_parser('inspect')
+    p.add_argument('--repo', default='.')
+    p = sub.add_parser('doctor')
+    p.add_argument('--repo', default='.')
     p = sub.add_parser('cleanup-plan')
     p.add_argument('--repo', default='.')
     p.add_argument('--run', required=True)
@@ -63,8 +100,14 @@ def main(argv=None):
 
     if args.command == 'preflight':
         result = preflight(args.repo)
-    elif args.command == 'status':
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if all(result.values()) else 1
+    if args.command == 'status':
         result = status(args.repo)
+    elif args.command == 'inspect':
+        result = inspect(args.repo)
+    elif args.command == 'doctor':
+        result = doctor(args.repo)
     else:
         result = cleanup_plan(args.repo, args.run, args.observations)
     print(json.dumps(result, ensure_ascii=False, indent=2))

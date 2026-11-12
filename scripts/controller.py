@@ -136,9 +136,44 @@ class Controller:
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']
 
-    def replace_worker(self, role, attempt, replacement_limit=1):
-        """检查替换上限；超限抛错，未超限只返回替换计划，不创建线程。"""
+    def request_stop(self, role, attempt):
+        """记录停止请求；不代表线程已停止。"""
         worker = self._worker(role, attempt)
+        worker['stopRequestedAt'] = _now_iso()
+        worker['stopStatus'] = 'requested'
+        self.save()
+        return worker['stopStatus']
+
+    def confirm_stop(self, role, attempt, idle, final_answer_present, no_active_turn):
+        """只有完整停止证据才确认停止。"""
+        worker = self._worker(role, attempt)
+        if not (idle and final_answer_present and no_active_turn):
+            raise RuntimeError('stop evidence incomplete')
+        worker['stopConfirmedAt'] = _now_iso()
+        worker['stopStatus'] = 'confirmed'
+        self.save()
+        return worker['stopStatus']
+
+    def rework(self, role, attempt, notes=''):
+        """把 reported worker 退回 running，记录返工修订。"""
+        worker = self._worker(role, attempt)
+        worker['reworkCount'] = worker.get('reworkCount', 0) + 1
+        worker['reworkNotes'] = notes
+        self.transition_worker(role, attempt, 'running')
+        return worker['reworkCount']
+
+    def replace_worker(self, role, attempt, replacement_limit=None):
+        """替换前要求停止证据、无后续 attempt，并从持久状态读取上限。"""
+        worker = self._worker(role, attempt)
+        if replacement_limit is None:
+            replacement_limit = self.state.get('limits', {}).get('replacementPerRole', 1)
+        if worker.get('stopStatus') != 'confirmed':
+            raise RuntimeError('stop evidence not confirmed')
+        if any(
+            w.get('role') == role and w.get('attempt', 0) > attempt
+            for w in self.state.get('workers', [])
+        ):
+            raise RuntimeError('replacement attempt already exists')
         result = check_retry(worker['attempt'], replacement_limit)
         if result['status'] == 'blocked':
             raise RuntimeError(f'replacement limit reached for {role}#{attempt}')

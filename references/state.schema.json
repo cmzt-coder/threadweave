@@ -374,6 +374,28 @@
                 "format": "date-time"
               }
             }
+          },
+          "stopStatus": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "confirmed"
+            ]
+          },
+          "stopRequestedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stopConfirmedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reworkCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reworkNotes": {
+            "type": "string"
           }
         }
       }

@@ -20,7 +20,7 @@ WORKER_TRANSITIONS = {
     'dispatched': {'running', 'blocked', 'failed', 'cancelled'},
     'running': {'blocked', 'reported', 'failed', 'cancelled'},
     'blocked': {'running', 'reported', 'failed', 'cancelled'},
-    'reported': {'integrated', 'failed', 'cancelled'},
+    'reported': {'integrated', 'running', 'failed', 'cancelled'},
     'integrated': {'archived'},
     'archived': set(),
     'failed': set(),
@@ -134,6 +134,14 @@ def locate_runs(repo_root):
                 'mtime': state_path.stat().st_mtime,
             })
             continue
+        if not isinstance(state, dict):
+            runs.append({
+                'runId': entry.name,
+                'path': str(state_path),
+                'status': 'unreadable',
+                'mtime': state_path.stat().st_mtime,
+            })
+            continue
         runs.append({
             'runId': state.get('runId', entry.name),
             'path': str(state_path),
@@ -144,9 +152,20 @@ def locate_runs(repo_root):
 
 
 def latest_incomplete_run(repo_root):
-    """返回最近一个非终端、可读的 run；没有则返回 None。"""
-    terminal = {'complete', 'failed', 'aborted', 'unreadable'}
-    candidates = [r for r in locate_runs(repo_root) if r['status'] not in terminal]
+    """返回最近一个仍需关注的 run；failed/aborted 的清理债务仍可定位。"""
+    candidates = []
+    for run in locate_runs(repo_root):
+        if run['status'] in ('complete', 'unreadable'):
+            continue
+        if run['status'] in ('failed', 'aborted'):
+            try:
+                state = read_state(run['path'])
+            except (json.JSONDecodeError, OSError):
+                candidates.append(run)
+                continue
+            if state.get('cleanup', {}).get('status') == 'complete':
+                continue
+        candidates.append(run)
     return candidates[-1] if candidates else None
 
 

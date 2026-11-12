@@ -1,14 +1,16 @@
 """验证本地辅助 CLI 的 preflight、status 与 cleanup-plan，不调用宿主 API。"""
+import io
 import json
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from state_store import run_state_path, write_state_atomic  # noqa: E402
-from threadweave import cleanup_plan, preflight, status  # noqa: E402
+from threadweave import cleanup_plan, doctor, inspect, main, preflight, status  # noqa: E402
 
 results = []
 
@@ -80,6 +82,22 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
     plan = cleanup_plan(repo, 'run-2', obs)
     check('cleanup-plan-actions',
           plan['a#1'] == {'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped'})
+
+    bad_repo = d / 'not-git'
+    bad_repo.mkdir()
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        exit_code = main(['preflight', '--repo', str(bad_repo)])
+    check('preflight-failure-exit-code', exit_code == 1)
+    check('doctor-ok-empty', doctor(bad_repo)['ok'])
+    check('inspect-empty', inspect(bad_repo)['runs'] == [])
+
+    unreadable = repo / '.threadweave' / 'run-array' / 'state.json'
+    unreadable.parent.mkdir(parents=True, exist_ok=True)
+    unreadable.write_text('[]', encoding='utf-8')
+    check('doctor-detects-unreadable', not doctor(repo)['ok'])
+    check('inspect-marks-unreadable',
+          any(run['status'] == 'unreadable' for run in inspect(repo)['runs']))
 
 print(json.dumps({
     'passed': len(results),

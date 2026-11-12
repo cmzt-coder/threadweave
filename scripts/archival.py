@@ -42,12 +42,12 @@ def _safe_segment(value, name):
     return value
 
 
-def archive_artifacts(run_dir, role, files):
+def archive_artifacts(run_dir, role, files, attempt=1, revision=1):
     """归档一组 artifact；返回本次写入的 manifest 条目。"""
     run_dir = Path(run_dir)
     _safe_segment(role, 'role')
     reports_root = (run_dir / 'reports').resolve()
-    target_dir = (run_dir / 'reports' / role).resolve()
+    target_dir = (run_dir / 'reports' / role / str(attempt) / str(revision)).resolve()
     if target_dir != reports_root and reports_root not in target_dir.parents:
         raise ValueError('archive target escapes reports root')
     if (run_dir / 'reports' / role).is_symlink():
@@ -69,6 +69,8 @@ def archive_artifacts(run_dir, role, files):
             shutil.copy2(source, target)
         entries.append({
             'role': role,
+            'attempt': attempt,
+            'revision': revision,
             'name': name,
             'source': str(source),
             'target': str(target),
@@ -76,9 +78,12 @@ def archive_artifacts(run_dir, role, files):
             'size': source.stat().st_size,
             'archivedAt': _now_iso(),
         })
-    merged = {(e['role'], e['name']): e for e in _load_manifest(manifest_path)}
+    merged = {
+        (e['role'], e.get('attempt', 1), e.get('revision', 1), e['name']): e
+        for e in _load_manifest(manifest_path)
+    }
     for entry in entries:
-        merged[(entry['role'], entry['name'])] = entry
+        merged[(entry['role'], entry['attempt'], entry['revision'], entry['name'])] = entry
     write_state_atomic(manifest_path, sorted(merged.values(), key=lambda e: (e['role'], e['name'])))
     return entries
 
@@ -88,10 +93,18 @@ def verify_archive(run_dir, expected):
     manifest_path = Path(run_dir) / 'archive-manifest.json'
     if not manifest_path.is_file():
         return [f'missing manifest: {manifest_path}']
-    indexed = {(e['role'], e['name']): e for e in _load_manifest(manifest_path)}
+    indexed = {
+        (e['role'], e.get('attempt', 1), e.get('revision', 1), e['name']): e
+        for e in _load_manifest(manifest_path)
+    }
     problems = []
-    for role, name in expected:
-        entry = indexed.get((role, name))
+    for item in expected:
+        if len(item) == 4:
+            role, attempt, revision, name = item
+        else:
+            role, name = item
+            attempt, revision = 1, 1
+        entry = indexed.get((role, attempt, revision, name))
         if entry is None:
             problems.append(f'missing entry: {role}/{name}')
             continue
