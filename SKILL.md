@@ -183,4 +183,5 @@ Load only the template needed for the current phase:
 - Recovery classification reference: `scripts/recovery.py`
 - Archival reference: `scripts/archival.py`
 - Cleanup classification reference: `scripts/cleanup.py`
+- Local helper CLI: `scripts/threadweave.py`
 - Final leader report: `references/final-report-template.md`
