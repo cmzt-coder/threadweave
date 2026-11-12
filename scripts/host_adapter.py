@@ -31,6 +31,10 @@ class HostAdapter(ABC):
     def wait_threads(self, thread_ids, timeout_seconds):
         """等待线程事件，返回完成/超时结果。"""
 
+    def capability_snapshot(self):
+        """返回当前适配器声明的能力快照。"""
+        return dict(self.capabilities)
+
     @abstractmethod
     def create_worktree(self, name):
         """创建隔离 worktree。"""

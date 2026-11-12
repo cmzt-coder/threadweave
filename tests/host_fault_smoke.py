@@ -32,8 +32,8 @@ class FaultAdapter(HostAdapter):
         self.calls = []
         self.create_error = create_error
 
-    def create_worker(self, prompt, project_id):
-        self.calls.append(('create_worker', prompt, project_id))
+    def create_worker(self, prompt, project_id, timeout_seconds=None):
+        self.calls.append(('create_worker', prompt, project_id, timeout_seconds))
         if self.create_error:
             raise self.create_error
         return {'threadId': 't-1'}
@@ -117,6 +117,40 @@ with tempfile.TemporaryDirectory(prefix='threadweave-host-fault-') as d:
         check('non-git-ignored', False)
     except ProjectResolutionError:
         check('non-git-ignored', True)
+
+    missing_id = [{'path': str(repo), 'isGitRepository': True, 'hostId': 'local'}]
+    try:
+        resolve_project(missing_id, repo, host_id='local')
+        check('missing-project-id-rejected', False)
+    except ProjectResolutionError:
+        check('missing-project-id-rejected', True)
+
+    wrong_host = [{
+        'projectId': 'p1', 'path': str(repo),
+        'isGitRepository': True, 'hostId': 'other',
+    }]
+    try:
+        resolve_project(wrong_host, repo, host_id='local')
+        check('host-mismatch-rejected', False)
+    except ProjectResolutionError:
+        check('host-mismatch-rejected', True)
+
+    cap_adapter = FaultAdapter()
+    cap_controller = Controller(cap_adapter, root, 'run-cap', make_state('run-cap'))
+    snapshot = cap_controller.record_capabilities()
+    check('capability-snapshot-recorded', snapshot['capabilities']['update_plan'] is True)
+    check('capability-snapshot-persisted',
+          read_state(run_state_path(root, 'run-cap'))['hostCapabilities']['hostId'] == 'local')
+
+    timeout_pass_adapter = FaultAdapter()
+    timeout_pass_adapter.capabilities = {
+        'update_plan': True, 'wait_threads': True, 'create_timeout': True,
+    }
+    timeout_pass_controller = Controller(
+        timeout_pass_adapter, root, 'run-timeout-pass', make_state('run-timeout-pass'))
+    timeout_pass_controller.create_worker('prompt', 'p1', timeout_seconds=42)
+    check('create-timeout-passed',
+          ('create_worker', 'prompt', 'p1', 42) in timeout_pass_adapter.calls)
 
     timeout_adapter = FaultAdapter(create_error=TimeoutError('create timed out'))
     timeout_controller = Controller(timeout_adapter, root, 'run-timeout', make_state('run-timeout'))

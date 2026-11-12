@@ -183,9 +183,24 @@ class Controller:
             'limit': replacement_limit,
         }
 
+    def capability_snapshot(self):
+        return {
+            'hostId': self.state.get('project', {}).get('hostId'),
+            'capabilities': dict(getattr(self.adapter, 'capabilities', {})),
+            'recordedAt': _now_iso(),
+        }
+
+    def record_capabilities(self):
+        self.state['hostCapabilities'] = self.capability_snapshot()
+        self.save()
+        return self.state['hostCapabilities']
+
     def create_worker(self, prompt, project_id, timeout_seconds=300):
         """创建 worker；超时记录证据后抛出，不自动重试或发送消息。"""
         try:
+            if getattr(self.adapter, 'capabilities', {}).get('create_timeout'):
+                return self.adapter.create_worker(
+                    prompt, project_id, timeout_seconds=timeout_seconds)
             return self.adapter.create_worker(prompt, project_id)
         except TimeoutError as exc:
             self.state['lastCreateError'] = {

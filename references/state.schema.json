@@ -618,6 +618,30 @@
           "format": "date-time"
         }
       }
+    },
+    "hostCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostId",
+        "capabilities",
+        "recordedAt"
+      ],
+      "properties": {
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     }
   }
 }
