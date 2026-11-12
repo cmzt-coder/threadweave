@@ -1,10 +1,10 @@
-# Thread Team
+# Threadweave（线程编织）
 
 [English](README.md) | 简体中文
 
 **把一个 Codex 会话,跑成一支小型工程团队。**
 
-Thread Team 是一个 Codex skill:当前线程担任 **leader**——负责规划、拆分、派发——并创建真实的 Codex **worker 线程**,每个 worker 独占一个任务边界、一条分支和一个专属 git worktree。leader 轮询进度、解决阻塞、逐条分支审查合并,最后做一次整体集成复查,再把结果交还给你。
+Threadweave 是一个 Codex skill:当前线程担任 **leader**——负责规划、拆分、派发——并创建真实的 Codex **worker 线程**,每个 worker 独占一个任务边界、一条分支和一个专属 git worktree。leader 轮询进度、解决阻塞、逐条分支审查合并,最后做一次整体集成复查,再把结果交还给你。
 
 这个 skill 只可能存在于 Codex,因为只有 Codex 把线程当作一等公民:`create_thread` 能创建带独立模型配置的真实会话,线程之间还能通过 `send_message_to_thread` 互发消息。所以 worker 是真实线程,而不是用完即弃的 subagent——它们保有自己的上下文、按自己的配置运行(默认 `gpt-5.4` + `high` thinking,可覆盖)、可以中途沟通,卡死时还能归档换人。skill 拒绝用 `spawn_agent` 模拟这套流程:线程工具不可用时,它会指出缺哪个能力,然后停下。
 
@@ -12,11 +12,11 @@ Thread Team 是一个 Codex skill:当前线程担任 **leader**——负责规�
 
 这个 skill 的主体不是"怎么开线程",而是护栏——每条对应一种失败模式。
 
-**共享 checkout 会毁掉一切。** 两个线程共用一个工作目录,会互相覆盖工作树、悄悄把改动混进彼此的分支——这是 thread team 最常见的死法。每个 worker 都拿到一个专属 git worktree,尽可能在创建线程时就建好。如果无法保证目录独占,skill 干脆不会进入团队模式。
+**共享 checkout 会毁掉一切。** 两个线程共用一个工作目录,会互相覆盖工作树、悄悄把改动混进彼此的分支——这是 Threadweave 最常见的死法。每个 worker 都拿到一个专属 git worktree,尽可能在创建线程时就建好。如果无法保证目录独占,skill 干脆不会进入团队模式。
 
-**leader 的上下文是全队最稀缺的资源。** 每次 `read_thread` 的转录、每段贴进消息的 diff,都会在 leader 上下文里常驻到运行结束。所以跨线程消息只携带信号——状态行、文件路径、commit SHA;大块内容走文件:每个 worker 在自己 worktree 里用 `.thread-team/notes.md` 记进度,把完整完成报告写进 `.thread-team/report.md`。`read_thread` 是昂贵的兜底手段,只用于启动确认、疑似卡死和消息含糊的场合,绝不做例行巡查。
+**leader 的上下文是全队最稀缺的资源。** 每次 `read_thread` 的转录、每段贴进消息的 diff,都会在 leader 上下文里常驻到运行结束。所以跨线程消息只携带信号——状态行、文件路径、commit SHA;大块内容走文件:每个 worker 在自己 worktree 里用 `.threadweave/notes.md` 记进度,把完整完成报告写进 `.threadweave/report.md`。`read_thread` 是昂贵的兜底手段,只用于启动确认、疑似卡死和消息含糊的场合,绝不做例行巡查。
 
-**长任务比会话活得久。** leader 上下文随时可能被压缩或中断,只活在对话里的状态会跟着一起死。花名册、worktree、派发、决策、换人、合并、heartbeat——每次变更后立刻记入 `.thread-team/<leader-thread-id>/state.md`;任何中断之后,leader 先重读状态文件再行动。这个目录被 git 排除、永不提交,运行结束后留作审计记录。
+**长任务比会话活得久。** leader 上下文随时可能被压缩或中断,只活在对话里的状态会跟着一起死。花名册、worktree、派发、决策、换人、合并、heartbeat——每次变更后立刻记入 `.threadweave/<leader-thread-id>/state.md`;任何中断之后,leader 先重读状态文件再行动。这个目录被 git 排除、永不提交,运行结束后留作审计记录。
 
 **忙等会把 leader 活活耗死。** leader 不做轮询死循环,而是排一个两分钟的 heartbeat、结束回合,被唤醒时再处理 worker 消息。工作流创建的每个 heartbeat 都必须在结束前删除——泄漏的 heartbeat 比任务活得久,会永远唤醒这个线程。
 
@@ -53,11 +53,11 @@ skill 自带的校准例子:**好的拆分**——一个 worker 写 API 端点,�
 
 ## 安装
 
-克隆到 Codex skills 目录,命名为 `thread-team`:
+克隆到 Codex skills 目录,命名为 `threadweave`:
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-git clone https://github.com/itmada/codex-thread-team.git "${CODEX_HOME:-$HOME/.codex}/skills/thread-team"
+git clone <your-threadweave-repository-url> "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
 ```
 
 更新:进入该目录执行 `git pull`。
@@ -68,22 +68,22 @@ git clone https://github.com/itmada/codex-thread-team.git "${CODEX_HOME:-$HOME/.
 
 直接点名:
 
-> Use $thread-team to split this task across a leader thread and collaborating worker threads.
+> Use $threadweave to split this task across a leader thread and collaborating worker threads.
 
-提到 thread team、并行 Codex 线程、worker 线程或 leader/worker 分支协作都会触发它。当任务看起来足够大、可并行、可分支隔离时,Codex 也可能主动提议这个模式——但未经你确认,它绝不创建 worker。
+提到 Threadweave、并行 Codex 线程、worker 线程或 leader/worker 分支协作都会触发它。当任务看起来足够大、可并行、可分支隔离时,Codex 也可能主动提议这个模式——但未经你确认,它绝不创建 worker。
 
 它擅长的任务形状:
 
-> Use $thread-team to implement the new billing settings page. Split backend API work, frontend UI work, and tests across workers.
+> Use $threadweave to implement the new billing settings page. Split backend API work, frontend UI work, and tests across workers.
 
-> Use $thread-team to parallelize this migration: one worker handles schema changes, one updates the data access layer, and one updates tests/docs.
+> Use $threadweave to parallelize this migration: one worker handles schema changes, one updates the data access layer, and one updates tests/docs.
 
 预期开头有一次确认:认可拆分方案和 worker 配置(`gpt-5.4`、thinking `high`,除非你另有要求)。之后运行自主推进;只有需要你拍板的阻塞才会找你,而你随时可以查状态或中止。
 
 ## 目录结构
 
 ```
-thread-team/
+threadweave/
 ├── SKILL.md                             # leader 工作流(Codex 读的就是它)
 ├── agents/
 │   └── openai.yaml                      # 展示名与默认 prompt
@@ -95,7 +95,7 @@ thread-team/
     └── final-report-template.md         # leader 面向用户的收尾报告
 ```
 
-运行时还会在仓库根留下 `.thread-team/`(git 排除):leader 的状态日志,加上每个 worker 的 `notes.md` 和 `report.md`——正是这份书面记录让恢复、换人和审计成为可能。
+运行时还会在仓库根留下 `.threadweave/`(git 排除):leader 的状态日志,加上每个 worker 的 `notes.md` 和 `report.md`——正是这份书面记录让恢复、换人和审计成为可能。
 
 ## 修改这个 skill
 

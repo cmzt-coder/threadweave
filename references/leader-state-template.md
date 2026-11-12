@@ -1,11 +1,11 @@
 # Leader State Template
 
-Use this compact record while coordinating a thread team.
+Use this compact record while coordinating a Threadweave run.
 
-Persist it to `.thread-team/<leader-thread-id>/state.md` under the repo root (one directory per run, keyed by leader thread ID), kept out of commits via the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, so do not hardcode `.git/info/exclude`). Update it immediately after every state change. After compaction or interruption, re-derive the path from your own leader thread ID and reread this file before acting.
+Persist it to `.threadweave/<leader-thread-id>/state.md` under the repo root (one directory per run, keyed by leader thread ID), kept out of commits via the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, so do not hardcode `.git/info/exclude`). Update it immediately after every state change. After compaction or interruption, re-derive the path from your own leader thread ID and reread this file before acting.
 
 ```md
-Thread-team leader state.
+Threadweave leader state.
 
 Leader thread ID:
 Integration branch:
@@ -39,7 +39,7 @@ Polling state:
 - Stall watch: <worker: passes with no activity, or none>
 
 Worker reports:
-- <worker>: pending/received, commit <sha>, report <worktree-path>/.thread-team/report.md
+- <worker>: pending/received, commit <sha>, report <worktree-path>/.threadweave/report.md
 
 Merge order:
 1. <worker branch>

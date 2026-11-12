@@ -3,7 +3,7 @@
 Use this after all selected worker branches are merged and the leader has completed the final review.
 
 ```text
-Thread-team task complete.
+Threadweave task complete.
 
 Leader thread:
 - Thread ID: <leader-thread-id>

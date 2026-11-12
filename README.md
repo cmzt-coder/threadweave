@@ -1,10 +1,10 @@
-# Thread Team
+# Threadweave
 
 English | [简体中文](README.zh-CN.md)
 
 **Run one Codex conversation as a small engineering team.**
 
-Thread Team is a Codex skill that turns the current thread into a **leader** — it plans, splits the task, and dispatches work — and creates real Codex **worker threads** that each own exactly one task boundary, one branch, and one exclusive git worktree. The leader polls, unblocks, reviews and merges branches one at a time, then does a final integration review before handing the result back.
+Threadweave is a Codex skill that turns the current thread into a **leader** — it plans, splits the task, and dispatches work — and creates real Codex **worker threads** that each own exactly one task boundary, one branch, and one exclusive git worktree. The leader polls, unblocks, reviews and merges branches one at a time, then does a final integration review before handing the result back.
 
 This can only exist on Codex, because only Codex has first-class threads: `create_thread` spawns a real session with its own model settings, and threads talk to each other through `send_message_to_thread`. Workers are therefore real threads, not throwaway subagents — they keep their own context, run with their own settings (`gpt-5.4` at `high` thinking by default; you can override), can be messaged mid-flight, and can be archived and replaced if they stall. The skill refuses to fake the workflow with `spawn_agent`: if the thread tools aren't available, it names the missing capability and stops.
 
@@ -12,11 +12,11 @@ This can only exist on Codex, because only Codex has first-class threads: `creat
 
 Most of this skill is not "how to spawn threads." It's guardrails — one per failure mode.
 
-**Shared checkouts corrupt everything.** Two threads in one working directory overwrite each other's tree and silently mix changes across branches — the most common way a thread team dies. Every worker gets an exclusive git worktree, created at thread-creation time when possible. If exclusive directories can't be arranged, the skill won't run in team mode at all.
+**Shared checkouts corrupt everything.** Two threads in one working directory overwrite each other's tree and silently mix changes across branches — the most common way a Threadweave run dies. Every worker gets an exclusive git worktree, created at thread-creation time when possible. If exclusive directories can't be arranged, the skill won't run in team mode at all.
 
-**The leader's context is the team's scarcest resource.** Every `read_thread` transcript and every pasted diff stays resident in the leader's context for the rest of the run. So cross-thread messages carry signals — a status line, file paths, commit SHAs — and payloads move as files: each worker keeps progress notes in `.thread-team/notes.md` and writes its full completion report to `.thread-team/report.md` in its worktree. `read_thread` is the expensive fallback for startup checks, suspected stalls, and ambiguous messages — never a routine sweep.
+**The leader's context is the team's scarcest resource.** Every `read_thread` transcript and every pasted diff stays resident in the leader's context for the rest of the run. So cross-thread messages carry signals — a status line, file paths, commit SHAs — and payloads move as files: each worker keeps progress notes in `.threadweave/notes.md` and writes its full completion report to `.threadweave/report.md` in its worktree. `read_thread` is the expensive fallback for startup checks, suspected stalls, and ambiguous messages — never a routine sweep.
 
-**Long runs outlive the conversation.** Leader context can be compacted or interrupted mid-run, and state that lives only in the conversation dies with it. Everything — roster, worktrees, dispatches, decisions, replacements, merges, heartbeats — is journaled to `.thread-team/<leader-thread-id>/state.md` immediately after every change, and the leader rereads it before acting after any interruption. The directory is git-excluded, never committed, and left behind as an audit record.
+**Long runs outlive the conversation.** Leader context can be compacted or interrupted mid-run, and state that lives only in the conversation dies with it. Everything — roster, worktrees, dispatches, decisions, replacements, merges, heartbeats — is journaled to `.threadweave/<leader-thread-id>/state.md` immediately after every change, and the leader rereads it before acting after any interruption. The directory is git-excluded, never committed, and left behind as an audit record.
 
 **Busy-waiting burns the leader alive.** Instead of polling in a loop, the leader schedules a two-minute heartbeat, ends its turn, and wakes to process worker messages. Every heartbeat the workflow creates must be deleted before it ends — a leaked heartbeat outlives the task and wakes the thread forever.
 
@@ -53,11 +53,11 @@ Calibration, straight from the skill: a **good split** is one worker on an API e
 
 ## Install
 
-Clone into your Codex skills directory as `thread-team`:
+Clone into your Codex skills directory as `threadweave`:
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-git clone https://github.com/itmada/codex-thread-team.git "${CODEX_HOME:-$HOME/.codex}/skills/thread-team"
+git clone <your-threadweave-repository-url> "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
 ```
 
 To update, run `git pull` inside that directory.
@@ -68,22 +68,22 @@ Requires a Codex environment that exposes the thread tools — `create_thread`, 
 
 Ask for it explicitly:
 
-> Use $thread-team to split this task across a leader thread and collaborating worker threads.
+> Use $threadweave to split this task across a leader thread and collaborating worker threads.
 
-Any mention of a thread team, parallel Codex threads, worker threads, or leader/worker branch work triggers it. Codex may also propose the mode on its own when a task looks large, parallelizable, and branch-isolatable — but it never creates workers without your confirmation.
+Any mention of Threadweave, parallel Codex threads, worker threads, or leader/worker branch work triggers it. Codex may also propose the mode on its own when a task looks large, parallelizable, and branch-isolatable — but it never creates workers without your confirmation.
 
 Task shapes it handles well:
 
-> Use $thread-team to implement the new billing settings page. Split backend API work, frontend UI work, and tests across workers.
+> Use $threadweave to implement the new billing settings page. Split backend API work, frontend UI work, and tests across workers.
 
-> Use $thread-team to parallelize this migration: one worker handles schema changes, one updates the data access layer, and one updates tests/docs.
+> Use $threadweave to parallelize this migration: one worker handles schema changes, one updates the data access layer, and one updates tests/docs.
 
 Expect one checkpoint up front: confirming the split and the worker settings (`gpt-5.4`, thinking `high`, unless you request otherwise). After that the run is autonomous; you're pulled in only for blockers that need your call, and you can ask for status or abort at any time.
 
 ## Layout
 
 ```
-thread-team/
+threadweave/
 ├── SKILL.md                             # the leader workflow (what Codex reads)
 ├── agents/
 │   └── openai.yaml                      # display name & default prompt
@@ -95,7 +95,7 @@ thread-team/
     └── final-report-template.md         # leader's wrap-up to the user
 ```
 
-At runtime, a run also leaves `.thread-team/` at the repo root (git-excluded): the leader's state journal plus each worker's `notes.md` and `report.md` — the paper trail that makes recovery, replacement, and audit possible.
+At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): the leader's state journal plus each worker's `notes.md` and `report.md` — the paper trail that makes recovery, replacement, and audit possible.
 
 ## Modifying the skill
 

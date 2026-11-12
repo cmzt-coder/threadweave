@@ -1,9 +1,9 @@
 ---
-name: thread-team
-description: "Use when the user explicitly asks for a thread team, parallel Codex threads, worker threads, leader/worker collaboration, or multi-thread branch work — or when a task looks large, parallelizable, and branch-isolatable enough that thread-team mode is worth proposing to the user. Requires Codex thread tools (create_thread, send_message_to_thread, read_thread)."
+name: threadweave
+description: "Use when the user explicitly asks for Threadweave mode, parallel Codex threads, worker threads, leader/worker collaboration, or multi-thread branch work — or when a task looks large, parallelizable, and branch-isolatable enough that Threadweave mode is worth proposing to the user. Requires Codex thread tools (create_thread, send_message_to_thread, read_thread)."
 ---
 
-# Thread Team
+# Threadweave
 
 Run Codex like a small engineering team. The current thread is the **leader**: it plans, splits, dispatches, polls, decides, merges serially, and performs the final review. Each **worker** is a real Codex thread that owns exactly one task boundary, one branch, and one exclusive working directory.
 
@@ -14,21 +14,21 @@ Never simulate this workflow with temporary subagents (`spawn_agent`). If `creat
 Single source of truth for worker settings — every other section refers here.
 
 - Default: model `gpt-5.4`, thinking `high`. The user may override either.
-- Before the user confirms thread-team execution, state plainly: "Worker threads will be created with model `gpt-5.4` and thinking `high` unless you request different worker settings." The user's confirmation then authorizes those settings.
+- Before the user confirms Threadweave execution, state plainly: "Worker threads will be created with model `gpt-5.4` and thinking `high` unless you request different worker settings." The user's confirmation then authorizes those settings.
 - Include the confirmed `model` and `thinking` in every worker `create_thread` call. Never omit them and rely on tool defaults.
 - Record the confirmed settings in the leader state file so replacement workers are created identically.
 
 ## Preflight Viability Assessment
 
-Triggering this skill does not authorize creating workers. First judge whether a thread team beats direct single-thread execution.
+Triggering this skill does not authorize creating workers. First judge whether Threadweave beats direct single-thread execution.
 
-Favor a thread team when: multiple independent work areas can proceed in parallel with low conflict risk; tasks have clear ownership, branch boundaries, and acceptance criteria; worker outputs can be reviewed and merged serially without reconstructing much shared context; expected time saved exceeds setup, polling, merge, and review overhead. The leader decides the worker count from this analysis: one worker per genuinely independent work area, and no more — every additional worker adds dispatch-design, polling, review, and merge cost that its parallelism must outweigh.
+Favor Threadweave when: multiple independent work areas can proceed in parallel with low conflict risk; tasks have clear ownership, branch boundaries, and acceptance criteria; worker outputs can be reviewed and merged serially without reconstructing much shared context; expected time saved exceeds setup, polling, merge, and review overhead. The leader decides the worker count from this analysis: one worker per genuinely independent work area, and no more — every additional worker adds dispatch-design, polling, review, and merge cost that its parallelism must outweigh.
 
 Favor direct execution when: the split would yield only one or two small subtasks; the work is a tight core refactor where one continuous context beats parallel throughput; subtasks share the same files, contracts, or mental model; worker branches would provide process discipline rather than actual speed; the task is too vague to split responsibly before local analysis.
 
 Then route by trigger path:
 
-- User explicitly requested thread-team mode and the assessment favors it → state the worker settings (see Worker Runtime Settings), get confirmation, proceed.
+- User explicitly requested Threadweave mode and the assessment favors it → state the worker settings (see Worker Runtime Settings), get confirmation, proceed.
 - User explicitly requested it but direct execution looks better → briefly recommend direct execution; if the user insists, proceed.
 - User did not request it → a positive assessment only justifies proposing the mode. Never create workers without user confirmation.
 
@@ -58,19 +58,19 @@ The canonical worker-facing rules live in the registration and dispatch template
 
 ## Workspace Isolation
 
-A branch alone does not isolate workers. Two threads sharing one checkout overwrite each other's working tree, corrupt every diff, and silently mix changes across branches — the most common way a thread team fails. Before any dispatch, guarantee each worker an exclusive working directory:
+A branch alone does not isolate workers. Two threads sharing one checkout overwrite each other's working tree, corrupt every diff, and silently mix changes across branches — the most common way a Threadweave run fails. Before any dispatch, guarantee each worker an exclusive working directory:
 
 - Preferred: create isolation at thread-creation time — `create_thread({ prompt, target: { type: "project", projectId: <workspace-root-or-project-id>, environment: { type: "worktree", startingState: { type: "branch", branchName: <integration-branch> } } }, model: <confirmed>, thinking: <confirmed> })` — so the worker starts inside its own worktree. Record each worker's worktree path in the state file and repeat it in that worker's dispatch.
 - Fallback (only if `create_thread` cannot provide a worktree environment): `git worktree add <path> -b <worker-branch> <base-commit>` per worker, then create the worker with a project target rooted at that path and a local environment. Tell the worker its exact working directory and base commit in the dispatch, and during the startup gate confirm from its actual command activity that it executes inside that directory.
-- Never let two workers share a working directory. If exclusive directories cannot be arranged, do not run thread-team mode — fall back to direct execution and tell the user why.
+- Never let two workers share a working directory. If exclusive directories cannot be arranged, do not run Threadweave mode — fall back to direct execution and tell the user why.
 - After integration, remove leader-created worktrees (`git worktree remove <path>`).
 
 ## Leader State Persistence
 
 Leader context can be compacted or interrupted mid-run; state that lives only in the conversation dies with it. The state file is the source of truth:
 
-- When phase 1 completes, write the leader state record (`references/leader-state-template.md`) to `.thread-team/<leader-thread-id>/state.md` under the repo root — one directory per run, keyed by leader thread ID, so successive or concurrent runs never overwrite each other and the leader can always re-derive its own state path after compaction from its own thread ID. Keep it out of commits: add `.thread-team/` to the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, not a directory). Never commit state files.
-- Before writing a new state file, check `.thread-team/` for run directories from other leaders whose final review is not marked complete. Report any to the user before proceeding — an interrupted run may have leaked heartbeats, worktrees, or unmerged branches, and its state file is the only record of them. Do not delete or overwrite another run's directory.
+- When phase 1 completes, write the leader state record (`references/leader-state-template.md`) to `.threadweave/<leader-thread-id>/state.md` under the repo root — one directory per run, keyed by leader thread ID, so successive or concurrent runs never overwrite each other and the leader can always re-derive its own state path after compaction from its own thread ID. Keep it out of commits: add `.threadweave/` to the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, not a directory). Never commit state files.
+- Before writing a new state file, check `.threadweave/` for run directories from other leaders whose final review is not marked complete. Report any to the user before proceeding — an interrupted run may have leaked heartbeats, worktrees, or unmerged branches, and its state file is the only record of them. Do not delete or overwrite another run's directory.
 - Update the file immediately after every state change: worker created, worktree assigned, dispatch sent, decision made, worker replaced, report received, branch merged, heartbeat scheduled or deleted.
 - After compaction, interruption, or any suspicion of stale context, reread the state file before acting. Use `list_threads` only to fill gaps the file cannot answer.
 
@@ -87,7 +87,7 @@ Workers may reason less strongly and hold less context than the leader; compensa
 
 Everything pasted into a cross-thread message — and every `read_thread` result — stays resident in the reading thread's context for the rest of the run. The leader's context is the team's scarcest resource; protect it:
 
-- Bulk artifacts move as files, not message text. Each worker maintains `.thread-team/notes.md` at its worktree root (current step, decisions, blockers — its recovery point after compaction or interruption) and writes its full completion report to `.thread-team/report.md` there. The shared exclude entry already covers both.
+- Bulk artifacts move as files, not message text. Each worker maintains `.threadweave/notes.md` at its worktree root (current step, decisions, blockers — its recovery point after compaction or interruption) and writes its full completion report to `.threadweave/report.md` there. The shared exclude entry already covers both.
 - Cross-thread messages carry signals, not payloads: the `From:` header, a status line, file paths, and commit SHAs. The leader reads report files directly from worker worktrees when it needs the detail.
 - Worker messages are the authoritative progress signal. `read_thread` is the expensive fallback: use it in the startup gate, on stall suspicion, or when a message is ambiguous — never as a routine sweep over all workers.
 
@@ -99,7 +99,7 @@ Run exactly these six phases in order. Before creating workers, call `update_pla
 
 Read the code, understand the objective, identify task and code boundaries. Run the Preflight Viability Assessment and route by its outcome, stating the worker settings before any authorizing confirmation. Only after that analysis, split the task into worker tasks. Write the initial state file (see Leader State Persistence).
 
-Done when: the user has authorized thread-team execution with stated worker settings, and the state file exists with the split, planned roster, and confirmed settings.
+Done when: the user has authorized Threadweave execution with stated worker settings, and the state file exists with the split, planned roster, and confirmed settings.
 
 ### 2. Worker thread initialization
 

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Thread Team"
+  display_name: "Threadweave"
   short_description: "Coordinate leader and worker threads"
-  default_prompt: "Use $thread-team to split this task across a leader thread and collaborating worker threads."
+  default_prompt: "Use $threadweave to split this task across a leader thread and collaborating worker threads."
