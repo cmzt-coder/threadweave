@@ -108,6 +108,18 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 ## First iteration and validation
 
 See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols and templates, not an executable controller; local Git checks do not replace a real-thread smoke test.
+## Local tests
+
+Run all local smoke suites:
+
+```bash
+python3 tests/run_all.py
+```
+
+This runs 12 suites and currently passes 188 assertions. These checks cover local Git
+primitives, schema/state logic and fake-adapter controller logic; they do not replace a
+real worker smoke test.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
