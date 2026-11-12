@@ -75,8 +75,35 @@ class Controller:
             'limit': replacement_limit,
         }
 
-    def write_plan(self, plan, update_plan_available=True):
+    def create_worker(self, prompt, project_id, timeout_seconds=300):
+        """创建 worker；超时记录证据后抛出，不自动重试或发送消息。"""
+        try:
+            return self.adapter.create_worker(prompt, project_id)
+        except TimeoutError as exc:
+            self.state['lastCreateError'] = {
+                'code': 'create_timeout',
+                'message': str(exc),
+                'at': _now_iso(),
+            }
+            self.save()
+            raise
+
+    def wait_for_workers(self, thread_ids, timeout_seconds=60):
+        """有 wait_threads 时等待事件；缺失时返回有界状态检查模式。"""
+        available = bool(getattr(self.adapter, 'capabilities', {}).get('wait_threads', True))
+        if available:
+            return self.adapter.wait_threads(thread_ids, timeout_seconds)
+        return {
+            'mode': 'bounded-status',
+            'threadIds': list(thread_ids),
+            'timeoutSeconds': timeout_seconds,
+        }
+
+    def write_plan(self, plan, update_plan_available=None):
         """可选工具降级：有 update_plan 时返回工具名，否则写入 state 文件。"""
+        if update_plan_available is None:
+            update_plan_available = bool(
+                getattr(self.adapter, 'capabilities', {}).get('update_plan', True))
         if update_plan_available:
             return 'update_plan'
         self.state['plan'] = plan

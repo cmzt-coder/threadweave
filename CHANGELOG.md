@@ -4,6 +4,11 @@
 
 ### Added
 
+- `scripts/project_resolver.py`：项目唯一匹配解析，拒绝零/多匹配与非 Git 项目。
+- 控制器 `create_worker` 超时记录与可选工具能力降级；`tests/host_fault_smoke.py` 13 项断言。
+
+### Added
+
 - `scripts/startup_gate.py`：可复用启动门禁校验，控制器与测试共用。
 - 控制器增强：`dispatch` 派发前校验启动报告；`replace_worker` 强制每角色一次替换上限；
   `write_plan` 在 `update_plan` 不可用时写 state 文件。

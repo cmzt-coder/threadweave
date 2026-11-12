@@ -8,6 +8,13 @@ from abc import ABC, abstractmethod
 class HostAdapter(ABC):
     """控制器依赖的宿主能力接口。"""
 
+    # 可选能力声明；具体适配器可覆盖，控制器据此选择降级路径。
+    capabilities = {
+        'update_plan': True,
+        'wait_threads': True,
+        'create_timeout': False,
+    }
+
     @abstractmethod
     def create_worker(self, prompt, project_id):
         """创建真实 worker 线程，返回含 threadId 的结果。"""
