@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "1.0",
+  "runId": "20261112-real-dual-02",
+  "createdAt": "2026-11-12T13:40:00+08:00",
+  "updatedAt": "2026-11-12T14:10:00+08:00",
+  "status": "complete",
+  "project": {
+    "projectId": "17c15c15-611c-4c43-9511-8c5eceab2d66",
+    "hostId": "local",
+    "canonicalRepositoryRoot": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave",
+    "commonDirectory": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave/.git"
+  },
+  "integration": {
+    "baseSha": "3ff1931e3f2b04d7da0e853d2fb49f0cc47e9562",
+    "branch": "threadweave/20261112-real-dual-02/integration",
+    "repoPath": "/Users/luzhentian/lzt/codex/luzhentian/codex-threadweave"
+  },
+  "authorization": {
+    "provenance": "direct request from the user in the current Codex task",
+    "messagingScope": "leader/worker messages, replies and named peer collaboration"
+  },
+  "limits": {
+    "workers": 2,
+    "initializationTimeoutSeconds": 300,
+    "replacementPerRole": 1
+  },
+  "leader": {
+    "threadId": "01a1ce48-a6b7-7f40-a194-abc3cf9f9822"
+  },
+  "workers": [
+    {
+      "role": "a",
+      "attempt": 1,
+      "state": "archived",
+      "branch": "threadweave/20261112-real-dual-02/a-1",
+      "baseSha": "3ff1931e3f2b04d7da0e853d2fb49f0cc47e9562",
+      "threadId": "01a1ce4a-1e19-7ad1-ac1a-1f5fd59b5cc4",
+      "creationIdentifiers": {
+        "clientThreadId": null,
+        "operationId": null,
+        "pendingWorktreeId": null
+      },
+      "worktree": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/a",
+      "createdAt": "2026-11-12T13:42:00+08:00",
+      "deadline": "2026-11-12T13:47:00+08:00",
+      "lastObservation": "2026-11-12T13:48:00+08:00",
+      "errors": []
+    },
+    {
+      "role": "b",
+      "attempt": 1,
+      "state": "archived",
+      "branch": "threadweave/20261112-real-dual-02/b-1",
+      "baseSha": "3ff1931e3f2b04d7da0e853d2fb49f0cc47e9562",
+      "threadId": "01a1ce4a-4d70-7eb3-a751-231d057460a1",
+      "creationIdentifiers": {
+        "clientThreadId": null,
+        "operationId": null,
+        "pendingWorktreeId": null
+      },
+      "worktree": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/b",
+      "createdAt": "2026-11-12T13:42:00+08:00",
+      "deadline": "2026-11-12T13:47:00+08:00",
+      "lastObservation": "2026-11-12T13:48:00+08:00",
+      "errors": []
+    }
+  ],
+  "resources": [
+    {
+      "type": "report",
+      "id": ".threadweave/20261112-real-dual-02/reports/a/report.md",
+      "owner": "a",
+      "status": "preserved"
+    },
+    {
+      "type": "report",
+      "id": ".threadweave/20261112-real-dual-02/reports/b/report.md",
+      "owner": "b",
+      "status": "preserved"
+    },
+    {
+      "type": "worktree",
+      "id": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/a",
+      "owner": "a",
+      "status": "removed"
+    },
+    {
+      "type": "worktree",
+      "id": "/Users/luzhentian/.codex/worktrees/20261112-real-dual-02/b",
+      "owner": "b",
+      "status": "removed"
+    }
+  ],
+  "mergeOrder": [
+    "threadweave/20261112-real-dual-02/a-1",
+    "threadweave/20261112-real-dual-02/b-1"
+  ],
+  "integrationLog": [
+    {
+      "branch": "threadweave/20261112-real-dual-02/a-1",
+      "mergeCommit": null,
+      "result": "merged",
+      "verification": "fast-forward 3ff1931..09219c6"
+    },
+    {
+      "branch": "threadweave/20261112-real-dual-02/b-1",
+      "mergeCommit": "61b1f699d84ed3510f40d2f73426adaa70453815",
+      "result": "merged",
+      "verification": "merge commit parents 09219c6 and 7038c87"
+    }
+  ],
+  "finalReview": {
+    "status": "complete",
+    "notes": "Both worker markers integrated; local/static checks passed."
+  },
+  "cleanup": {
+    "status": "complete",
+    "preservedReports": [".threadweave/20261112-real-dual-02/reports/"],
+    "outstandingResources": [],
+    "notes": "Worker worktrees removed non-force after merge, cleanliness and idle checks."
+  },
+  "errors": []
+}
