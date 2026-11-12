@@ -39,13 +39,14 @@ def classify_worker_recovery(worker, observed, replacement_limit=1):
 
     head = observed.get('head')
     base = worker.get('baseSha')
-    if state == 'reported':
-        # 执行后：base 必须是 HEAD 的祖先，报告 SHA 必须匹配 branch tip
+    if state in ('running', 'blocked', 'reported'):
+        # 执行阶段：base 必须是 HEAD 的祖先；reported 还需报告 SHA 匹配
         if not observed.get('base_is_ancestor', False):
             return 'block'
-        report_sha = observed.get('report_sha')
-        if not report_sha or report_sha != head:
-            return 'block'
+        if state == 'reported':
+            report_sha = observed.get('report_sha')
+            if not report_sha or report_sha != head:
+                return 'block'
     else:
         # 初始化阶段：HEAD 必须精确等于 base
         if head != base:

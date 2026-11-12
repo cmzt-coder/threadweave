@@ -6,6 +6,7 @@
 from datetime import datetime
 
 TERMINAL_STATES = {'archived', 'failed', 'cancelled', 'integrated'}
+INITIALIZING_STATES = {'planned', 'creating', 'pending', 'validating'}
 
 
 def _as_datetime(value):
@@ -14,7 +15,7 @@ def _as_datetime(value):
 
 def check_initialization(created_at, now, limit_seconds=300, worker_state=None):
     """检查 worker 初始化是否超过默认五分钟；终态不适用。"""
-    if worker_state in TERMINAL_STATES:
+    if worker_state is not None and worker_state not in INITIALIZING_STATES:
         return {'status': 'not_applicable', 'elapsedSeconds': 0}
     elapsed = (_as_datetime(now) - _as_datetime(created_at)).total_seconds()
     status = 'deadline_exceeded' if elapsed > limit_seconds else 'ok'
@@ -27,9 +28,12 @@ def check_stall(last_progress_at, now, inactivity_seconds=360, grace_seconds=120
     if worker_state in TERMINAL_STATES:
         return {'status': 'not_applicable', 'elapsedSeconds': 0}
     if grace_deadline is not None:
-        deadline = _as_datetime(grace_deadline)
-        status = 'stalled' if _as_datetime(now) >= deadline else 'grace'
-        return {'status': status, 'graceDeadline': grace_deadline}
+        if _as_datetime(last_progress_at) > _as_datetime(grace_deadline):
+            grace_deadline = None
+        else:
+            deadline = _as_datetime(grace_deadline)
+            status = 'stalled' if _as_datetime(now) >= deadline else 'grace'
+            return {'status': status, 'graceDeadline': grace_deadline}
     if status_requested_at is not None:
         if _as_datetime(last_progress_at) > _as_datetime(status_requested_at):
             status_requested_at = None

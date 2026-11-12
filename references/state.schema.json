@@ -321,6 +321,10 @@
                   "acknowledged",
                   "not_sent"
                 ]
+              },
+              "resolvedAt": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           },

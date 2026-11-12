@@ -34,6 +34,12 @@ check('stall-stalled',
 check('grace-deadline-stalled',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:12:00+08:00',
                   grace_deadline='2026-11-12T10:10:00+08:00')['status'] == 'stalled')
+check('stall-new-progress-after-deadline',
+      check_stall('2026-11-12T10:11:00+08:00', '2026-11-12T10:12:00+08:00',
+                  grace_deadline='2026-11-12T10:10:00+08:00')['status'] == 'ok')
+check('initialization-running-not-applicable',
+      check_initialization('2026-11-12T10:00:00+08:00', '2026-11-12T10:12:00+08:00',
+                           worker_state='running')['status'] == 'not_applicable')
 check('grace-deadline-grace',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00',
                   grace_deadline='2026-11-12T10:10:00+08:00')['status'] == 'grace')

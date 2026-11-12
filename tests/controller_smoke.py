@@ -97,6 +97,7 @@ def make_state(run_id='run-1'):
         'workers': [{
             'role': 'a', 'attempt': 1, 'state': 'ready', 'threadId': 't-a',
             'branch': 'tw/a-1', 'baseSha': 'a' * 40,
+            'worktree': '/repo/worktree',
             'createdAt': '2026-11-12T10:00:00+08:00',
             'deadline': '2026-11-12T10:05:00+08:00',
             'lastObservation': '2026-11-12T10:00:00+08:00',
@@ -128,8 +129,8 @@ with tempfile.TemporaryDirectory() as d:
         'integration_head': 'a' * 40,
     }
     bad_report = {
-        'cwd': str(Path(d) / 'worker'),
-        'worktree_root': str(Path(d) / 'worker'),
+        'cwd': '/repo/worktree',
+        'worktree_root': '/repo/worktree',
         'git_common_dir': str(Path(d) / 'fake-common'),
         'branch': 'tw/a-1',
         'head': 'b' * 40,
@@ -147,8 +148,8 @@ with tempfile.TemporaryDirectory() as d:
           ('send_message', 't-a', 'bad dispatch') not in adapter.calls)
 
     good_report = {
-        'cwd': str(Path(d) / 'worker'),
-        'worktree_root': str(Path(d) / 'worker'),
+        'cwd': '/repo/worktree',
+        'worktree_root': '/repo/worktree',
         'git_common_dir': str(Path(d) / 'fake-common'),
         'branch': 'tw/a-1',
         'head': 'a' * 40,
@@ -190,6 +191,7 @@ with tempfile.TemporaryDirectory() as d:
     team_state['workers'].append({
         'role': 'b', 'attempt': 1, 'state': 'pending', 'threadId': None,
         'branch': 'tw/b-1', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-b',
         'createdAt': '2026-11-12T10:00:00+08:00',
         'deadline': '2026-11-12T10:05:00+08:00',
         'lastObservation': '2026-11-12T10:00:00+08:00',
@@ -277,6 +279,7 @@ with tempfile.TemporaryDirectory() as d:
     ab_state['workers'].append({
         'role': 'b', 'attempt': 1, 'state': 'ready', 'threadId': 't-b',
         'branch': 'tw/b-1', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-b',
         'createdAt': '2026-11-12T10:00:00+08:00',
         'deadline': '2026-11-12T10:05:00+08:00',
         'lastObservation': '2026-11-12T10:00:00+08:00',
@@ -285,7 +288,8 @@ with tempfile.TemporaryDirectory() as d:
     ab_controller = Controller(FakeAdapter(), d, 'run-ab', ab_state)
     ab_controller.dispatch('a', 1, 'a first', startup_report=good_report, expected=expected)
     expected_b = dict(expected, branch='tw/b-1')
-    good_b = dict(good_report, role='b', branch='tw/b-1')
+    good_b = dict(good_report, role='b', branch='tw/b-1',
+                  worktree_root='/repo/worktree-b', cwd='/repo/worktree-b')
     ab_controller.dispatch('b', 1, 'b second', startup_report=good_b, expected=expected_b)
     ab_saved = read_state(run_state_path(d, 'run-ab'))
     check('sequential-dispatch-a-b',
@@ -341,6 +345,7 @@ with tempfile.TemporaryDirectory() as d:
     old_attempt_state['workers'].append({
         'role': 'a', 'attempt': 2, 'state': 'ready', 'threadId': 't-a2',
         'branch': 'tw/a-2', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-a2',
         'createdAt': '2026-11-12T10:00:00+08:00',
         'deadline': '2026-11-12T10:05:00+08:00',
         'lastObservation': '2026-11-12T10:00:00+08:00',
@@ -348,7 +353,8 @@ with tempfile.TemporaryDirectory() as d:
     })
     old_attempt_controller = Controller(FakeAdapter(), d, 'run-old-attempt', old_attempt_state)
     expected_a2 = dict(expected, branch='tw/a-2')
-    good_a2 = dict(good_report, attempt=2, branch='tw/a-2')
+    good_a2 = dict(good_report, attempt=2, branch='tw/a-2',
+                   worktree_root='/repo/worktree-a2', cwd='/repo/worktree-a2')
     old_attempt_controller.dispatch(
         'a', 2, 'a2', startup_report=good_a2, expected=expected_a2)
     check('old-attempt-does-not-block',
@@ -359,6 +365,7 @@ with tempfile.TemporaryDirectory() as d:
     running_b_state['workers'].append({
         'role': 'b', 'attempt': 1, 'state': 'ready', 'threadId': 't-b',
         'branch': 'tw/b-1', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-b',
         'createdAt': '2026-11-12T10:00:00+08:00',
         'deadline': '2026-11-12T10:05:00+08:00',
         'lastObservation': '2026-11-12T10:00:00+08:00',
@@ -366,7 +373,8 @@ with tempfile.TemporaryDirectory() as d:
     })
     running_b_controller = Controller(FakeAdapter(), d, 'run-running-b', running_b_state)
     expected_b2 = dict(expected, branch='tw/b-1')
-    good_b2 = dict(good_report, role='b', branch='tw/b-1')
+    good_b2 = dict(good_report, role='b', branch='tw/b-1',
+                   worktree_root='/repo/worktree-b', cwd='/repo/worktree-b')
     running_b_controller.dispatch(
         'b', 1, 'b', startup_report=good_b2, expected=expected_b2)
     check('running-a-does-not-block-b',
@@ -493,6 +501,104 @@ with tempfile.TemporaryDirectory() as d:
         check('false-complete-rejected', False)
     except ValueError:
         check('false-complete-rejected', True)
+
+    resolve_state = make_state('run-resolve')
+    resolve_state['workers'][0]['dispatchIntent'] = {
+        'dispatchId': 'd1', 'message': 'task',
+        'at': '2026-11-12T10:00:00+08:00', 'result': 'unknown',
+    }
+    resolve_controller = Controller(FakeAdapter(), d, 'run-resolve', resolve_state)
+    resolve_controller.resolve_dispatch('a', 1, 'sent')
+    resolved = read_state(run_state_path(d, 'run-resolve'))
+    check('resolve-sent-dispatched', resolved['workers'][0]['state'] == 'dispatched')
+    check('resolve-sent-resolvedAt', 'resolvedAt' in resolved['workers'][0]['dispatchIntent'])
+
+    not_sent_state = make_state('run-not-sent')
+    not_sent_state['workers'][0]['dispatchIntent'] = {
+        'dispatchId': 'd2', 'message': 'task',
+        'at': '2026-11-12T10:00:00+08:00', 'result': 'unknown',
+    }
+    not_sent_controller = Controller(FakeAdapter(), d, 'run-not-sent', not_sent_state)
+    not_sent_controller.resolve_dispatch('a', 1, 'not_sent')
+    not_sent_saved = read_state(run_state_path(d, 'run-not-sent'))
+    check('resolve-not-sent-ready', not_sent_saved['workers'][0]['state'] == 'ready')
+
+    unknown_state = make_state('run-unknown')
+    unknown_state['workers'][0]['dispatchIntent'] = {
+        'dispatchId': 'd3', 'message': 'task',
+        'at': '2026-11-12T10:00:00+08:00', 'result': 'pending',
+    }
+    unknown_controller = Controller(FakeAdapter(), d, 'run-unknown', unknown_state)
+    unknown_controller.resolve_dispatch('a', 1, 'unknown')
+    unknown_saved = read_state(run_state_path(d, 'run-unknown'))
+    check('resolve-unknown-stays-pending',
+          unknown_saved['workers'][0]['dispatchIntent']['result'] == 'unknown')
+
+    history_complete = make_state('run-history-complete')
+    history_complete['workers'][0]['state'] = 'cancelled'
+    history_complete['workers'][0]['stopStatus'] = 'confirmed'
+    history_complete['workers'].append({
+        'role': 'a', 'attempt': 2, 'state': 'archived', 'threadId': 't-a2',
+        'branch': 'tw/a-2', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-a2',
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'deadline': '2026-11-12T10:05:00+08:00',
+        'lastObservation': '2026-11-12T10:00:00+08:00',
+        'errors': [],
+    })
+    history_complete['status'] = 'complete'
+    history_complete['finalReview'] = {'status': 'complete', 'notes': ''}
+    history_complete['cleanup'] = {
+        'status': 'complete', 'preservedReports': [],
+        'outstandingResources': [], 'notes': '',
+    }
+    try:
+        Controller(FakeAdapter(), d, 'run-history-complete', history_complete).save()
+        check('history-cancelled-does-not-block-complete', True)
+    except ValueError:
+        check('history-cancelled-does-not-block-complete', False)
+
+    old_dispatch_state = make_state('run-old-dispatch')
+    old_dispatch_state['workers'][0]['state'] = 'ready'
+    old_dispatch_state['workers'].append({
+        'role': 'a', 'attempt': 2, 'state': 'ready', 'threadId': 't-a2',
+        'branch': 'tw/a-2', 'baseSha': 'a' * 40,
+        'worktree': '/repo/worktree-a2',
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'deadline': '2026-11-12T10:05:00+08:00',
+        'lastObservation': '2026-11-12T10:00:00+08:00',
+        'errors': [],
+    })
+    old_dispatch_controller = Controller(
+        FakeAdapter(), d, 'run-old-dispatch', old_dispatch_state)
+    try:
+        old_dispatch_controller.dispatch(
+            'a', 1, 'old', startup_report=good_report, expected=expected)
+        check('old-attempt-dispatch-rejected', False)
+    except RuntimeError:
+        check('old-attempt-dispatch-rejected', True)
+
+    future_controller = Controller(
+        FakeAdapter(), d, 'run-future', make_state('run-future'))
+    try:
+        future_controller.dispatch(
+            'a', 1, 'future',
+            startup_report=dict(good_report, observedAt='2099-01-01T00:00:00+00:00'),
+            expected=expected)
+        check('future-evidence-rejected', False)
+    except RuntimeError:
+        check('future-evidence-rejected', True)
+
+    no_worktree_state = make_state('run-no-worktree')
+    no_worktree_state['workers'][0].pop('worktree')
+    no_worktree_controller = Controller(
+        FakeAdapter(), d, 'run-no-worktree', no_worktree_state)
+    try:
+        no_worktree_controller.dispatch(
+            'a', 1, 'no worktree', startup_report=good_report, expected=expected)
+        check('missing-worktree-rejected', False)
+    except RuntimeError:
+        check('missing-worktree-rejected', True)
 
     bad_state = make_state('run-bad')
     bad_state['status'] = 'not-a-status'

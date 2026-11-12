@@ -100,6 +100,8 @@ class Controller:
         """派发前校验团队门禁、启动证据与集成 HEAD；发送前持久化 intent。"""
         worker = self._worker(role, attempt)
         self._ensure_external_action_allowed(worker, 'dispatch')
+        if self._active_workers().get(role) is not worker:
+            raise RuntimeError(f'{role}#{attempt} is not the active attempt')
         if worker['state'] != 'ready':
             raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected ready')
         if not worker.get('threadId'):
@@ -119,6 +121,12 @@ class Controller:
         expected['role'] = role
         expected['attempt'] = attempt
         expected.setdefault('common_dir', self.state['project']['commonDirectory'])
+        worktree = worker.get('worktree')
+        if not worktree:
+            raise RuntimeError('worker has no registered worktree')
+        if expected.get('worker_root') not in (None, worktree):
+            raise RuntimeError('expected worker_root does not match persisted worker')
+        expected['worker_root'] = worktree
         ok, reasons = validate_startup(startup_report, expected)
         if not ok:
             raise RuntimeError(f'startup validation failed: {reasons}')
@@ -137,6 +145,8 @@ class Controller:
             observed = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
             age = (datetime.now(observed.tzinfo) - observed).total_seconds()
             max_age = expected.get('max_evidence_age_seconds', 300)
+            if age < -60:
+                raise RuntimeError('startup evidence is from the future')
             if age > max_age:
                 raise RuntimeError('startup evidence is stale')
         allowed = {'ready', 'dispatched', 'running', 'reported', 'integrated', 'archived'}
@@ -211,15 +221,23 @@ class Controller:
         return worker['reworkCount']
 
     def resolve_dispatch(self, role, attempt, result):
-        """收敛 pending/unknown 的派发意图；不发送任何消息。"""
+        """收敛 pending/unknown 的派发意图，并同步 worker 执行状态。"""
         if result not in ('sent', 'not_sent', 'unknown'):
             raise ValueError('result must be sent/not_sent/unknown')
         worker = self._worker(role, attempt)
         intent = worker.get('dispatchIntent')
         if not intent:
             raise RuntimeError('no dispatch intent to resolve')
+        if result == 'sent' and worker['state'] != 'ready':
+            raise RuntimeError(
+                f'cannot mark {worker["state"]} as dispatched; expected ready')
         intent['result'] = result
         intent['resolvedAt'] = _now_iso()
+        if result == 'sent':
+            worker['state'] = 'dispatched'
+            worker['dispatchAt'] = _now_iso()
+            worker['activityRevision'] = worker.get('activityRevision', 0) + 1
+            worker.pop('stopStatus', None)
         self.save()
         return intent['result']
 

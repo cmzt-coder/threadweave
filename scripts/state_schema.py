@@ -81,12 +81,18 @@ def validate_invariants(state):
             errors.append('complete run requires complete finalReview')
         if state.get('cleanup', {}).get('status') != 'complete':
             errors.append('complete run requires complete cleanup')
+        active_by_role = {}
+        for worker in workers:
+            role = worker.get('role')
+            attempt = worker.get('attempt', 1)
+            if role not in active_by_role or attempt > active_by_role[role].get('attempt', 0):
+                active_by_role[role] = worker
         active = [
-            w for w in workers
+            w for w in active_by_role.values()
             if w.get('state') not in ('integrated', 'archived')
         ]
         if active:
-            errors.append('complete run requires all workers integrated/archived')
+            errors.append('complete run requires active workers integrated/archived')
         if state.get('cleanup', {}).get('outstandingResources'):
             errors.append('complete run requires no outstanding resources')
     if errors:

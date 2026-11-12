@@ -43,6 +43,14 @@ check('pending-client-revalidate',
       classify_worker_recovery(
           dict(base_worker, state='pending', threadId=None),
           {'thread_exists': False}) == 'revalidate')
+check('running-committed-reuse',
+      classify_worker_recovery(
+          dict(base_worker, state='running'),
+          dict(base_observed, head='b' * 40, base_is_ancestor=True)) == 'reuse')
+check('blocked-committed-reuse',
+      classify_worker_recovery(
+          dict(base_worker, state='blocked'),
+          dict(base_observed, head='b' * 40, base_is_ancestor=True)) == 'reuse')
 check('reported-missing-report-block',
       classify_worker_recovery(
           dict(base_worker, state='reported'),
