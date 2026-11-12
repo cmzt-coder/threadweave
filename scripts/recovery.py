@@ -11,18 +11,41 @@ def classify_worker_recovery(worker, observed, replacement_limit=1):
     state = worker.get('state')
     if state in TERMINAL_STATES:
         return 'skip'
-    if not worker.get('threadId') or not observed.get('thread_exists'):
+
+    # unknown 先重验，不 recreation
+    if observed.get('thread_exists') is None:
+        return 'revalidate'
+
+    # pending 有 clientThreadId 但无真实 threadId：先解析，不 recreation
+    if state == 'pending' and not worker.get('threadId'):
+        return 'revalidate'
+
+    if observed.get('thread_exists') is False or not worker.get('threadId'):
         if worker.get('attempt', 1) > replacement_limit:
             return 'block'
         return 'recreate'
+
     if observed.get('thread_status') not in (None, 'idle'):
         return 'revalidate'
     if not observed.get('worktree_exists'):
         return 'revalidate'
     if observed.get('branch') != worker.get('branch'):
         return 'block'
-    if observed.get('head') != worker.get('baseSha'):
-        return 'block'
+
+    head = observed.get('head')
+    base = worker.get('baseSha')
+    if state == 'reported':
+        # 执行后：base 必须是 HEAD 的祖先，报告 SHA 必须匹配 branch tip
+        if not observed.get('base_is_ancestor', False):
+            return 'block'
+        report_sha = observed.get('report_sha')
+        if report_sha and report_sha != head:
+            return 'block'
+    else:
+        # 初始化阶段：HEAD 必须精确等于 base
+        if head != base:
+            return 'block'
+
     if observed.get('status_porcelain'):
         return 'block'
     return 'reuse'

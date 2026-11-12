@@ -22,6 +22,10 @@ def check(name, condition):
 clean = {
     'worktree_exists': True, 'status_porcelain': '',
     'unmerged_commits': False, 'worker_status': 'idle',
+    'owned_by_run': True, 'is_primary': False,
+    'stop': {
+        'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True,
+    },
 }
 check('missing-worktree-idempotent',
       classify_worktree_cleanup({'worktree_exists': False}, True) == 'already_removed')
@@ -33,6 +37,16 @@ check('report-missing-protected',
       classify_worktree_cleanup(clean, False) == 'protect_report')
 check('active-worker-protected',
       classify_worktree_cleanup(dict(clean, worker_status='active'), True) == 'protect_active')
+check('unknown-git-protected',
+      classify_worktree_cleanup(dict(clean, status_porcelain=None), True) == 'protect_unknown')
+check('not-owned-protected',
+      classify_worktree_cleanup(dict(clean, owned_by_run=False), True) == 'protect_not_owned')
+check('primary-protected',
+      classify_worktree_cleanup(dict(clean, is_primary=True), True) == 'protect_not_owned')
+check('unverified-stop-protected',
+      classify_worktree_cleanup(
+          dict(clean, stop={'thread_idle': True, 'final_answer_present': False,
+                            'no_active_turn': True}), True) == 'protect_unverified')
 check('clean-worktree-removable',
       classify_worktree_cleanup(clean, True) == 'remove')
 

@@ -89,8 +89,18 @@ def read_state(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+def _safe_segment(value, name):
+    """拒绝空值、绝对路径和父目录段。"""
+    if not isinstance(value, str) or not value or value in ('.', '..'):
+        raise ValueError(f'invalid {name}')
+    if '/' in value or '\\' in value or Path(value).is_absolute():
+        raise ValueError(f'invalid {name}')
+    return value
+
+
 def run_state_dir(repo_root, run_id):
     """返回 leader checkout 内的 durable run 目录，不在任何 worker worktree 内。"""
+    _safe_segment(run_id, 'run_id')
     return Path(repo_root) / '.threadweave' / run_id
 
 

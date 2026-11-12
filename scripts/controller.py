@@ -8,11 +8,16 @@ from datetime import datetime, timezone
 from budget import check_retry
 from host_adapter import HostAdapter
 from startup_gate import validate_startup
-from state_store import run_state_path, validate_transition, write_state_atomic
+from state_schema import validate_state
+from state_store import StateLock, read_state, run_state_path, validate_transition, write_state_atomic
 
 
 def _now_iso():
     return datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
+
+
+class StaleStateError(Exception):
+    """内存快照落后于磁盘 revision，拒绝覆盖。"""
 
 
 class Controller:
@@ -26,7 +31,25 @@ class Controller:
         self.state_path = run_state_path(repo_root, run_id)
 
     def save(self):
-        write_state_atomic(self.state_path, self.state)
+        """加锁、校验 revision 与 schema 后原子写入；拒绝旧快照覆盖。"""
+        self.state.setdefault('revision', 0)
+        self.state.setdefault('updatedAt', _now_iso())
+        lock = StateLock(self.state_path.with_suffix('.lock'))
+        lock.acquire()
+        try:
+            if self.state_path.is_file():
+                disk = read_state(self.state_path)
+                disk_revision = disk.get('revision', 0)
+                if disk_revision != self.state['revision']:
+                    raise StaleStateError(
+                        f'stale state: disk revision {disk_revision}, '
+                        f'memory revision {self.state["revision"]}')
+            self.state['updatedAt'] = _now_iso()
+            validate_state(self.state)
+            self.state['revision'] += 1
+            write_state_atomic(self.state_path, self.state)
+        finally:
+            lock.release()
 
     def transition_run(self, new_status):
         validate_transition('run', self.state['status'], new_status)
@@ -45,20 +68,45 @@ class Controller:
         worker['state'] = new_status
         self.save()
 
-    def dispatch(self, role, attempt, message, startup_report=None, expected=None):
-        """仅在 worker ready、启动报告通过且已有真实 threadId 时派发。"""
+    def dispatch(self, role, attempt, message, startup_report, expected):
+        """派发前校验团队门禁、启动证据与集成 HEAD；发送前持久化 intent。"""
         worker = self._worker(role, attempt)
         if worker['state'] != 'ready':
             raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected ready')
         if not worker.get('threadId'):
             raise RuntimeError(f'worker {role}#{attempt} has no real threadId')
-        if startup_report is not None:
-            if expected is None:
-                raise ValueError('expected startup metadata is required')
-            ok, reasons = validate_startup(startup_report, expected)
-            if not ok:
-                raise RuntimeError(f'startup validation failed: {reasons}')
-        self.adapter.send_message(worker['threadId'], message)
+        if startup_report is None or expected is None:
+            raise ValueError('startup_report and expected are required')
+        ok, reasons = validate_startup(startup_report, expected)
+        if not ok:
+            raise RuntimeError(f'startup validation failed: {reasons}')
+        integration_head = expected.get('integration_head')
+        if integration_head != self.state['integration']['baseSha']:
+            raise RuntimeError('integration HEAD drifted from recorded base')
+        allowed = {'ready', 'dispatched', 'reported', 'integrated', 'archived'}
+        blocked = [
+            f'{w.get("role")}#{w.get("attempt")}:{w.get("state")}'
+            for w in self.state.get('workers', [])
+            if w.get('state') not in allowed
+        ]
+        if blocked:
+            raise RuntimeError('team gate not ready: ' + ', '.join(blocked))
+
+        dispatch_id = f"{role}#{attempt}@{_now_iso()}"
+        worker['dispatchIntent'] = {
+            'dispatchId': dispatch_id,
+            'message': message,
+            'at': _now_iso(),
+            'result': 'pending',
+        }
+        self.save()
+        try:
+            self.adapter.send_message(worker['threadId'], message)
+        except Exception:
+            worker['dispatchIntent']['result'] = 'unknown'
+            self.save()
+            raise
+        worker['dispatchIntent']['result'] = 'sent'
         worker['dispatchAt'] = _now_iso()
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']

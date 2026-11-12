@@ -34,14 +34,24 @@ def _load_manifest(manifest_path):
     return json.loads(manifest_path.read_text(encoding='utf-8'))
 
 
+def _safe_segment(value, name):
+    if not isinstance(value, str) or not value or value in ('.', '..'):
+        raise ValueError(f'invalid {name}')
+    if '/' in value or '\\' in value or Path(value).is_absolute():
+        raise ValueError(f'invalid {name}')
+    return value
+
+
 def archive_artifacts(run_dir, role, files):
     """归档一组 artifact；返回本次写入的 manifest 条目。"""
     run_dir = Path(run_dir)
+    _safe_segment(role, 'role')
     target_dir = run_dir / 'reports' / role
     target_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = run_dir / 'archive-manifest.json'
     entries = []
     for name, source in files.items():
+        _safe_segment(name, 'artifact name')
         source = Path(source)
         if not source.is_file():
             raise FileNotFoundError(source)

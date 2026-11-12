@@ -33,6 +33,26 @@ check('missing-thread-recreate',
 check('replacement-limit-block',
       classify_worker_recovery(dict(base_worker, attempt=2, threadId=None),
                                {'thread_exists': False}, replacement_limit=1) == 'block')
+check('unknown-thread-revalidate',
+      classify_worker_recovery(base_worker, dict(base_observed, thread_exists=None)) == 'revalidate')
+check('pending-client-revalidate',
+      classify_worker_recovery(
+          dict(base_worker, state='pending', threadId=None),
+          {'thread_exists': False}) == 'revalidate')
+check('reported-committed-reuse',
+      classify_worker_recovery(
+          dict(base_worker, state='reported'),
+          dict(base_observed, head='b' * 40,
+               base_is_ancestor=True, report_sha='b' * 40)) == 'reuse')
+check('reported-wrong-report-block',
+      classify_worker_recovery(
+          dict(base_worker, state='reported'),
+          dict(base_observed, head='b' * 40,
+               base_is_ancestor=True, report_sha='c' * 40)) == 'block')
+check('reported-not-ancestor-block',
+      classify_worker_recovery(
+          dict(base_worker, state='reported'),
+          dict(base_observed, head='b' * 40, base_is_ancestor=False)) == 'block')
 check('healthy-reuse',
       classify_worker_recovery(base_worker, base_observed) == 'reuse')
 check('active-revalidate',

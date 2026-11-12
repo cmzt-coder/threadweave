@@ -6,66 +6,160 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schemaVersion", "runId", "createdAt", "updatedAt", "status",
-    "project", "integration", "authorization", "limits", "leader",
-    "workers", "resources", "mergeOrder", "integrationLog",
-    "finalReview", "cleanup", "errors"
+    "schemaVersion",
+    "runId",
+    "createdAt",
+    "updatedAt",
+    "status",
+    "project",
+    "integration",
+    "authorization",
+    "limits",
+    "leader",
+    "workers",
+    "resources",
+    "mergeOrder",
+    "integrationLog",
+    "finalReview",
+    "cleanup",
+    "errors"
   ],
   "properties": {
-    "schemaVersion": { "type": "string", "const": "1.0" },
-    "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "createdAt": { "type": "string", "format": "date-time" },
-    "updatedAt": { "type": "string", "format": "date-time" },
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "status": {
       "type": "string",
-      "enum": ["planned", "preflight", "initializing", "dispatching", "observing", "integrating", "final-review", "complete", "failed", "aborted", "cleanup_pending"]
+      "enum": [
+        "planned",
+        "preflight",
+        "initializing",
+        "dispatching",
+        "observing",
+        "integrating",
+        "final-review",
+        "complete",
+        "failed",
+        "aborted",
+        "cleanup_pending"
+      ]
     },
     "project": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["projectId", "hostId", "canonicalRepositoryRoot", "commonDirectory"],
+      "required": [
+        "projectId",
+        "hostId",
+        "canonicalRepositoryRoot",
+        "commonDirectory"
+      ],
       "properties": {
-        "projectId": { "type": "string", "minLength": 1 },
-        "hostId": { "type": "string", "minLength": 1 },
-        "canonicalRepositoryRoot": { "type": "string", "minLength": 1 },
-        "commonDirectory": { "type": "string", "minLength": 1 }
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hostId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonicalRepositoryRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commonDirectory": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "integration": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["baseSha", "branch", "repoPath"],
+      "required": [
+        "baseSha",
+        "branch",
+        "repoPath"
+      ],
       "properties": {
-        "baseSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "branch": { "type": "string", "minLength": 1 },
-        "repoPath": { "type": "string", "minLength": 1 }
+        "baseSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repoPath": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "authorization": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provenance", "messagingScope"],
+      "required": [
+        "provenance",
+        "messagingScope"
+      ],
       "properties": {
-        "provenance": { "type": "string", "minLength": 1 },
-        "messagingScope": { "type": "string", "minLength": 1 }
+        "provenance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messagingScope": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "limits": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workers", "initializationTimeoutSeconds", "replacementPerRole"],
+      "required": [
+        "workers",
+        "initializationTimeoutSeconds",
+        "replacementPerRole"
+      ],
       "properties": {
-        "workers": { "type": "integer", "minimum": 1 },
-        "initializationTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "replacementPerRole": { "type": "integer", "minimum": 0 }
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initializationTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replacementPerRole": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "leader": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["threadId"],
+      "required": [
+        "threadId"
+      ],
       "properties": {
-        "threadId": { "type": "string", "minLength": 1 }
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "workers": {
@@ -73,40 +167,159 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["role", "attempt", "state", "branch", "baseSha", "createdAt", "deadline", "lastObservation", "errors"],
+        "required": [
+          "role",
+          "attempt",
+          "state",
+          "branch",
+          "baseSha",
+          "createdAt",
+          "deadline",
+          "lastObservation",
+          "errors"
+        ],
         "properties": {
-          "role": { "type": "string", "minLength": 1 },
-          "attempt": { "type": "integer", "minimum": 1 },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
           "state": {
             "type": "string",
-            "enum": ["planned", "creating", "pending", "validating", "ready", "dispatched", "running", "blocked", "reported", "integrated", "archived", "failed", "cancelled"]
+            "enum": [
+              "planned",
+              "creating",
+              "pending",
+              "validating",
+              "ready",
+              "dispatched",
+              "running",
+              "blocked",
+              "reported",
+              "integrated",
+              "archived",
+              "failed",
+              "cancelled"
+            ]
           },
-          "branch": { "type": "string", "minLength": 1 },
-          "baseSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-          "threadId": { "type": ["string", "null"] },
+          "branch": {
+            "type": "string",
+            "minLength": 1
+          },
+          "baseSha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "threadId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "creationIdentifiers": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "clientThreadId": { "type": ["string", "null"] },
-              "operationId": { "type": ["string", "null"] },
-              "pendingWorktreeId": { "type": ["string", "null"] }
+              "clientThreadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "operationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "pendingWorktreeId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           },
-          "worktree": { "type": ["string", "null"] },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "deadline": { "type": "string", "format": "date-time" },
-          "lastObservation": { "type": "string", "format": "date-time" },
+          "worktree": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastObservation": {
+            "type": "string",
+            "format": "date-time"
+          },
           "errors": {
             "type": "array",
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["code", "message", "at"],
+              "required": [
+                "code",
+                "message",
+                "at"
+              ],
               "properties": {
-                "code": { "type": "string", "minLength": 1 },
-                "message": { "type": "string", "minLength": 1 },
-                "at": { "type": "string", "format": "date-time" }
+                "code": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "dispatchAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dispatchIntent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dispatchId",
+              "message",
+              "at",
+              "result"
+            ],
+            "properties": {
+              "dispatchId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "sent",
+                  "unknown",
+                  "acknowledged"
+                ]
               }
             }
           }
@@ -118,56 +331,150 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "id", "owner", "status"],
+        "required": [
+          "type",
+          "id",
+          "owner",
+          "status"
+        ],
         "properties": {
-          "type": { "type": "string", "enum": ["worktree", "report", "notes", "branch", "automation"] },
-          "id": { "type": "string", "minLength": 1 },
-          "owner": { "type": "string", "minLength": 1 },
-          "status": { "type": "string", "enum": ["active", "preserved", "removed", "archived", "pending"] }
+          "type": {
+            "type": "string",
+            "enum": [
+              "worktree",
+              "report",
+              "notes",
+              "branch",
+              "automation"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "preserved",
+              "removed",
+              "archived",
+              "pending"
+            ]
+          }
         }
       }
     },
     "mergeOrder": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "integrationLog": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["branch", "result", "verification"],
+        "required": [
+          "branch",
+          "result",
+          "verification"
+        ],
         "properties": {
-          "branch": { "type": "string", "minLength": 1 },
+          "branch": {
+            "type": "string",
+            "minLength": 1
+          },
           "mergeCommit": {
             "anyOf": [
-              { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-              { "type": "null" }
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "result": { "type": "string", "enum": ["pending", "merged", "failed", "skipped"] },
-          "verification": { "type": "string", "minLength": 1 }
+          "result": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "merged",
+              "failed",
+              "skipped"
+            ]
+          },
+          "verification": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "finalReview": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "notes"],
+      "required": [
+        "status",
+        "notes"
+      ],
       "properties": {
-        "status": { "type": "string", "enum": ["pending", "complete", "failed", "aborted", "cleanup_pending"] },
-        "notes": { "type": "string" }
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "complete",
+            "failed",
+            "aborted",
+            "cleanup_pending"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "cleanup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "preservedReports", "outstandingResources", "notes"],
+      "required": [
+        "status",
+        "preservedReports",
+        "outstandingResources",
+        "notes"
+      ],
       "properties": {
-        "status": { "type": "string", "enum": ["pending", "complete", "partial", "failed"] },
-        "preservedReports": { "type": "array", "items": { "type": "string" } },
-        "outstandingResources": { "type": "array", "items": { "type": "string" } },
-        "notes": { "type": "string" }
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "complete",
+            "partial",
+            "failed"
+          ]
+        },
+        "preservedReports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outstandingResources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "errors": {
@@ -175,13 +482,66 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["at", "scope", "code", "message", "resolved"],
+        "required": [
+          "at",
+          "scope",
+          "code",
+          "message",
+          "resolved"
+        ],
         "properties": {
-          "at": { "type": "string", "format": "date-time" },
-          "scope": { "type": "string", "minLength": 1 },
-          "code": { "type": "string", "minLength": 1 },
-          "message": { "type": "string", "minLength": 1 },
-          "resolved": { "type": "boolean" }
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "plan": {
+      "type": [
+        "object",
+        "array"
+      ]
+    },
+    "lastCreateError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "at"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     }

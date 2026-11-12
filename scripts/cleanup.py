@@ -6,15 +6,23 @@
 
 
 def classify_worktree_cleanup(observed, report_archived):
-    """返回 worktree 清理动作；未合并或脏状态一律保护。"""
+    """返回 worktree 清理动作；缺失证据、非本 run、primary 一律保护。"""
     if not observed.get('worktree_exists'):
         return 'already_removed'
+    if observed.get('is_primary') or not observed.get('owned_by_run'):
+        return 'protect_not_owned'
+    if observed.get('status_porcelain') is None or observed.get('unmerged_commits') is None:
+        return 'protect_unknown'
     if observed.get('status_porcelain'):
         return 'protect_dirty'
     if observed.get('unmerged_commits'):
         return 'protect_unmerged'
     if not report_archived:
         return 'protect_report'
+    stop = observed.get('stop', {})
+    required = ('thread_idle', 'final_answer_present', 'no_active_turn')
+    if not all(stop.get(key) for key in required):
+        return 'protect_unverified'
     if observed.get('worker_status') not in ('idle', 'archived'):
         return 'protect_active'
     return 'remove'
@@ -57,9 +65,11 @@ def build_cleanup_plan(state, observations):
     for worker in state.get('workers', []):
         key = f"{worker.get('role')}#{worker.get('attempt')}"
         observed = observations.get(key, {})
+        worktree_observed = dict(observed.get('worktree', {}))
+        worktree_observed.setdefault('stop', observed.get('stop', {}))
         plan[key] = {
             'worktree': classify_worktree_cleanup(
-                observed.get('worktree', {}), observed.get('report_archived', False)),
+                worktree_observed, observed.get('report_archived', False)),
             'branch': classify_branch_cleanup(observed.get('branch', {})),
             'stop_evidence': verify_stop_evidence(observed.get('stop', {})),
         }

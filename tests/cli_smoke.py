@@ -66,6 +66,7 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
             'worktree': {
                 'worktree_exists': True, 'status_porcelain': '',
                 'unmerged_commits': False, 'worker_status': 'idle',
+                'owned_by_run': True, 'is_primary': False,
             },
             'report_archived': True,
             'branch': {'branch_exists': True, 'merged_into_integration': True},

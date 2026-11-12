@@ -6,10 +6,11 @@ from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
+from archival import archive_artifacts  # noqa: E402
 from controller import Controller  # noqa: E402
 from host_adapter import HostAdapter  # noqa: E402
 from project_resolver import ProjectResolutionError, resolve_project  # noqa: E402
-from state_store import read_state, run_state_path  # noqa: E402
+from state_store import read_state, run_state_dir, run_state_path  # noqa: E402
 
 results = []
 
@@ -57,7 +58,31 @@ class FaultAdapter(HostAdapter):
 def make_state(run_id):
     return {
         'schemaVersion': '1.0', 'runId': run_id,
-        'status': 'initializing', 'workers': [],
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'updatedAt': '2026-11-12T10:00:00+08:00',
+        'status': 'initializing',
+        'project': {
+            'projectId': 'p1', 'hostId': 'local',
+            'canonicalRepositoryRoot': '/repo', 'commonDirectory': '/repo/.git',
+        },
+        'integration': {
+            'baseSha': 'a' * 40, 'branch': 'main', 'repoPath': '/repo',
+        },
+        'authorization': {'provenance': 'test', 'messagingScope': 'test'},
+        'limits': {
+            'workers': 2, 'initializationTimeoutSeconds': 300, 'replacementPerRole': 1,
+        },
+        'leader': {'threadId': 't-leader'},
+        'resources': [],
+        'mergeOrder': [],
+        'integrationLog': [],
+        'finalReview': {'status': 'pending', 'notes': ''},
+        'cleanup': {
+            'status': 'pending', 'preservedReports': [],
+            'outstandingResources': [], 'notes': '',
+        },
+        'errors': [],
+        'workers': [],
     }
 
 
@@ -121,6 +146,32 @@ with tempfile.TemporaryDirectory(prefix='threadweave-host-fault-') as d:
     check('update-plan-available', normal.write_plan({'x': 1}) == 'update_plan')
     check('wait-threads-available', normal.wait_for_workers(['t-1'], 30) == {'timedOut': False})
     check('wait-threads-called', ('wait_threads', ['t-1'], 30) in normal_adapter.calls)
+
+    try:
+        run_state_dir(root, '../escape')
+        check('run-id-traversal-rejected', False)
+    except ValueError:
+        check('run-id-traversal-rejected', True)
+
+    try:
+        run_state_path(root, '/absolute')
+        check('run-id-absolute-rejected', False)
+    except ValueError:
+        check('run-id-absolute-rejected', True)
+
+    try:
+        archive_artifacts(run_state_dir(root, 'run-path'), '../outside', {})
+        check('archive-role-traversal-rejected', False)
+    except ValueError:
+        check('archive-role-traversal-rejected', True)
+
+    source = root / 'source.txt'
+    source.write_text('x', encoding='utf-8')
+    try:
+        archive_artifacts(run_state_dir(root, 'run-path'), 'a', {'../escape.txt': source})
+        check('archive-name-traversal-rejected', False)
+    except ValueError:
+        check('archive-name-traversal-rejected', True)
 
 print(json.dumps({
     'passed': len(results),
