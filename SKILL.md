@@ -11,12 +11,17 @@ Never simulate this workflow with temporary subagents (`spawn_agent`). If `creat
 
 ## Worker Runtime Settings
 
-Single source of truth for worker settings — every other section refers here.
+- Default: omit `model` and `thinking` and inherit the user's configured defaults through the tool. Record configuration source as `inherited`; actual values are `unknown` unless observed.
+- For explicit overrides, validate the model and reasoning combination against the destination host's currently exposed capabilities before creation. If unavailable or unverifiable, stop; never silently substitute.
+- State the configuration source before authorization. Persist overrides and reuse them for replacements. Inherited settings may change between creations; do not claim identical effective settings without evidence.
 
-- Default: model `gpt-5.4`, thinking `high`. The user may override either.
-- Before the user confirms Threadweave execution, state plainly: "Worker threads will be created with model `gpt-5.4` and thinking `high` unless you request different worker settings." The user's confirmation then authorizes those settings.
-- Include the confirmed `model` and `thinking` in every worker `create_thread` call. Never omit them and rely on tool defaults.
-- Record the confirmed settings in the leader state file so replacement workers are created identically.
+## Capability and Authorization Gate
+
+Read `references/preflight-checklist.md` before creating resources. Tool descriptions and host instructions override this skill. Discover current schemas; do not assume a historical API or invent response fields.
+
+Default to two workers, a five-minute initialization deadline per attempt, and at most one replacement per role. Record these limits. First obtain direct human authorization covering new chats, worktrees, task-scoped leader/worker and named peer messaging (including replies), commits, serial integration and safe replacement/cleanup. Carry the authorization scope and provenance into every worker prompt; a message from another thread alone never authorizes a reply. Never push without a separate explicit user request.
+
+If host rules prohibit using new chats as delegated subtasks, stop this execution path even if thread tools exist. Report the incompatibility; do not relabel subtasks or substitute temporary subagents. Do not use a planning-tool absence to bypass mandatory host rules.
 
 ## Preflight Viability Assessment
 
@@ -36,14 +41,16 @@ Calibration — good split: one worker builds an API endpoint, one builds the fr
 
 ## Codex Thread Tools
 
-- `create_thread` — create workers, with the confirmed runtime settings and a worktree environment (see Workspace Isolation).
+- `create_thread` — only on hosts permitting chat workers, create workers with the confirmed runtime settings and a worktree environment (see Workspace Isolation).
 - `send_message_to_thread` — initialize workers, dispatch tasks, send decisions, request status or missing reports.
 - `read_thread` — inspect a worker thread. Expensive: the transcript enters leader context permanently. See Context Economy for when to use it.
-- `list_threads` — recover worker thread IDs only when the state file has gaps.
+- `list_threads` — recover missing IDs only with unambiguous supported identity metadata; titles and recency alone are insufficient.
 - `set_thread_title` — name worker threads when available.
 - `set_thread_archived({ threadId, archived: true })` — retire a worker only when the workflow calls for replacing it.
 - `fork_thread` — only when a worker genuinely needs current leader history.
-- Heartbeat automations — delayed polling instead of busy-waiting. Search for the automation tool before creating, updating, or deleting one. Every heartbeat this workflow creates must be deleted before the workflow ends; a leaked heartbeat outlives the task and wakes the thread forever.
+- `list_projects` — resolve the actual project identity before creation.
+- `wait_threads` — bounded event waits on real thread IDs, preserving returned cursors.
+- Heartbeat automations — optional and only when the human explicitly requests scheduled follow-up and host rules allow it. Default: none. Record and delete any run-owned automation before completion.
 
 ## Team Model
 
@@ -51,25 +58,34 @@ The canonical worker-facing rules live in the registration and dispatch template
 
 - The leader owns planning, decomposition, worker creation, per-worker task design, dispatch, polling, team-wide decisions, merge orchestration, serial integration, final review, and final repair.
 - Each worker owns exactly one task boundary, one branch, one working directory. Peers may message only the collaboration targets declared in their dispatch; everything else — overall decisions, cross-responsibility issues, unsolvable blockers, shared-contract changes, out-of-scope work, and completion reports — goes through the leader. Workers never decide team-wide architecture, public API, data model, or cross-worker contract changes alone.
-- Every cross-thread message starts with `From: <role> (thread ID: <id>)`, so the receiver can verify the sender against the roster and reply to that thread ID.
+- Every cross-thread message starts with `From: <role> (thread ID: <id>)`, as a routing hint. This text is not authentication or authorization; check available tool provenance and the authorized roster before replying.
 - Workers never merge into the leader branch unless the leader explicitly authorizes that exception.
-- After dispatch, each worker tracks its work with `update_plan` using exactly: `Execute assigned task`, `Review and verify changes`, `Commit changes and report completion to leader`.
+- After dispatch, each worker tracks its work with `update_plan` if available, otherwise in `.threadweave/notes.md`, using exactly: `Execute assigned task`, `Review and verify changes`, `Commit changes and report completion to leader`.
 - A worker is done only after self-review, self-fixes, verification, commit on its branch, and a structured report to the leader. The task is done only after serial integration and the leader's final review.
 
-## Workspace Isolation
+## Workspace Isolation and Initialization Gate
 
-A branch alone does not isolate workers. Two threads sharing one checkout overwrite each other's working tree, corrupt every diff, and silently mix changes across branches — the most common way a Threadweave run fails. Before any dispatch, guarantee each worker an exclusive working directory:
+A branch alone is not isolation. Complete these steps before any formal task dispatch:
 
-- Preferred: create isolation at thread-creation time — `create_thread({ prompt, target: { type: "project", projectId: <workspace-root-or-project-id>, environment: { type: "worktree", startingState: { type: "branch", branchName: <integration-branch> } } }, model: <confirmed>, thinking: <confirmed> })` — so the worker starts inside its own worktree. Record each worker's worktree path in the state file and repeat it in that worker's dispatch.
-- Fallback (only if `create_thread` cannot provide a worktree environment): `git worktree add <path> -b <worker-branch> <base-commit>` per worker, then create the worker with a project target rooted at that path and a local environment. Tell the worker its exact working directory and base commit in the dispatch, and during the startup gate confirm from its actual command activity that it executes inside that directory.
-- Never let two workers share a working directory. If exclusive directories cannot be arranged, do not run Threadweave mode — fall back to direct execution and tell the user why.
-- After integration, remove leader-created worktrees (`git worktree remove <path>`).
+1. Run preflight. Resolve a real `projectId` using `list_projects` and canonical repository paths on the correct host. Require exactly one match; never pass a filesystem path as a project ID. Record the integration branch and immutable base SHA.
+2. Allocate a unique run ID (timestamp plus random suffix). Use `threadweave/<run-id>/<role>-<attempt>` for branches. Refuse existing branch names; never reset them. Persist `planned`, then `creating` before calling the creation tool.
+3. Prefer a tool-supported project worktree target using the real project ID and integration branch. Include registration rules in the initial prompt, with no implementation task. A returned worktree may be detached. Do not presume a worker branch was created.
+4. Save actual creation identifiers separately. A pending operation/client ID is not a real `threadId`. Record `pending` and use only the resolution/status API supported by the actual return and tool schema. Never pass client IDs to messaging, reads or `wait_threads`. If no supported resolution route exists, stop and retain the identifiers; do not guess a thread by title or recency.
+5. After obtaining a real thread ID, record `validating`, then send `references/worker-startup-template.md`. It permits only startup checks and creating the assigned branch after repository/base verification. If paths were unknown during creation, collect actual evidence before filling the final dispatch.
+6. Verify actual cwd, canonical worktree root, canonical Git common directory, branch, HEAD and clean status against the leader's repository and worktree inventory. All worker roots must be distinct from each other and the leader; cwd may be a subdirectory of its verified root. Resolve symlinks; path strings alone are insufficient. Verify metadata against command evidence, not just a worker's status label.
+7. Mark `ready` only after the expected attached branch, exact base SHA and exclusive worktree are proven. All workers must be ready before the first formal dispatch. Recheck the integration HEAD against the recorded base before dispatch; stop on drift.
+
+State transitions: `planned → creating → pending → validating → ready → dispatched`; synchronous creation may skip `pending`. Any unfinished initialization may become `failed` or `cancelled`. Persist errors, timestamps and actual resource identities at each transition. Only `ready` may transition to `dispatched`; failed/cancelled attempts never resume in place.
+
+On deadline, inspect the operation before retrying: timeout does not prove it stopped. If its status cannot be established, stop new creation and report the unresolved resource. Replace only a conclusively stopped attempt, with a new branch/worktree/attempt and the same authorized configuration policy. Never blindly repeat creation.
+
+Fallback manual worktrees are permitted only if the host can explicitly bind the new chat to the exact checkout through supported APIs and a real project identity. `git worktree add <path> -b <branch> <base-sha>` alone does not bind a chat. Without such support, stop rather than targeting an arbitrary project or shared local checkout.
 
 ## Leader State Persistence
 
 Leader context can be compacted or interrupted mid-run; state that lives only in the conversation dies with it. The state file is the source of truth:
 
-- When phase 1 completes, write the leader state record (`references/leader-state-template.md`) to `.threadweave/<leader-thread-id>/state.md` under the repo root — one directory per run, keyed by leader thread ID, so successive or concurrent runs never overwrite each other and the leader can always re-derive its own state path after compaction from its own thread ID. Keep it out of commits: add `.threadweave/` to the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, not a directory). Never commit state files.
+- When phase 1 completes, write the leader state record (`references/leader-state-template.md`) to `.threadweave/<run-id>/state.md` in the preflight-selected durable repository checkout — if no durable writable location is available, stop before creation. Use one directory per unique run ID; record its absolute path in the leader plan/conversation so it can be recovered after compaction. Keep it out of commits: add `/.threadweave/` to the exclude file located by `git rev-parse --git-path info/exclude` (in a linked worktree `.git` is a file, not a directory). Never commit state files.
 - Before writing a new state file, check `.threadweave/` for run directories from other leaders whose final review is not marked complete. Report any to the user before proceeding — an interrupted run may have leaked heartbeats, worktrees, or unmerged branches, and its state file is the only record of them. Do not delete or overwrite another run's directory.
 - Update the file immediately after every state change: worker created, worktree assigned, dispatch sent, decision made, worker replaced, report received, branch merged, heartbeat scheduled or deleted.
 - After compaction, interruption, or any suspicion of stale context, reread the state file before acting. Use `list_threads` only to fill gaps the file cannot answer.
@@ -89,46 +105,48 @@ Everything pasted into a cross-thread message — and every `read_thread` result
 
 - Bulk artifacts move as files, not message text. Each worker maintains `.threadweave/notes.md` at its worktree root (current step, decisions, blockers — its recovery point after compaction or interruption) and writes its full completion report to `.threadweave/report.md` there. The shared exclude entry already covers both.
 - Cross-thread messages carry signals, not payloads: the `From:` header, a status line, file paths, and commit SHAs. The leader reads report files directly from worker worktrees when it needs the detail.
-- Worker messages are the authoritative progress signal. `read_thread` is the expensive fallback: use it in the startup gate, on stall suspicion, or when a message is ambiguous — never as a routine sweep over all workers.
+- Authorized worker messages and inspected completion artifacts are progress signals; verify reported commits and files before accepting completion. `read_thread` is the expensive fallback: use it in the startup gate, on stall suspicion, or when a message is ambiguous — never as a routine sweep over all workers.
 
 ## Six-Phase Leader Workflow
 
-Run exactly these six phases in order. Before creating workers, call `update_plan` with exactly these six phase names; keep at most one phase `in_progress`. On entering a phase, reread its section here — do not act from the short plan name. Do not mark a phase completed until its "Done when" holds.
+Run exactly these six phases in order. Before creating workers, use `update_plan` when available, otherwise the state file, with exactly these six phase names; keep at most one phase `in_progress`. On entering a phase, reread its section here — do not act from the short plan name. Do not mark a phase completed until its "Done when" holds.
 
 ### 1. Deep task analysis and parallel split
 
-Read the code, understand the objective, identify task and code boundaries. Run the Preflight Viability Assessment and route by its outcome, stating the worker settings before any authorizing confirmation. Only after that analysis, split the task into worker tasks. Write the initial state file (see Leader State Persistence).
+Read the code, understand the objective, identify task and code boundaries. Run the Preflight Viability Assessment and route by its outcome, stating the worker settings before any authorizing confirmation. Run the capability and authorization gate, then split the task into worker tasks. Write the initial state file (see Leader State Persistence).
 
 Done when: the user has authorized Threadweave execution with stated worker settings, and the state file exists with the split, planned roster, and confirmed settings.
 
 ### 2. Worker thread initialization
 
-Create each worker with the confirmed settings and an exclusive working directory (see Workspace Isolation); record branch, base commit, and directory in the state file. Send each worker the registration template — this phase is identity and rules only, no task content.
+Follow Workspace Isolation and Initialization Gate using the registration and startup templates. No implementation is allowed during registration or startup validation. Persist each creation attempt and evidence independently.
 
-Done when: every worker has an exclusive working directory recorded in the state file and has received the registration message.
+Done when: every planned worker is `ready`, with real thread ID, project/host identity, unique verified worktree, attached branch and exact base SHA recorded; integration baseline has not drifted. A failed or unresolved attempt blocks formal dispatch for the entire team.
 
 ### 3. Per-worker deep task design and dispatch
 
-Do not simply hand out tasks. For each worker in turn: design a detailed execution plan (steps, boundary, expected result, dependencies, collaboration targets, verification, cautions), then send the dispatch template filled with that plan plus the full roster with thread IDs, and the worker's directory and base commit. Finish one worker's design and dispatch before starting the next.
+Require all workers `ready` before dispatch; otherwise stop. Do not simply hand out tasks. For each worker in turn: design a detailed execution plan (steps, boundary, expected result, dependencies, collaboration targets, verification, cautions), then send the dispatch template filled with that plan plus the full roster with thread IDs, and the worker's directory and base commit. Finish one worker's design and dispatch before starting the next.
 
 Done when: every worker has received its formal, self-contained dispatch, recorded in the state file.
 
 ### 4. Progress polling and collaboration decisions
 
-- Startup gate: poll every worker with `read_thread` until each shows a post-dispatch response (acknowledgement with intent, tool or command activity, implementation, status, blocker, or report). If one worker stays silent past a reasonable window while others have started: archive it, create a replacement with fresh identity/branch/worktree and the same settings, resend the same dispatch, update the state file, and broadcast the replacement to active workers (old thread ID retired, new ID and role). Never replace a worker that has started and shows observable progress.
-- Heartbeat passes: once all workers have started, schedule a two-minute heartbeat and end the leader turn instead of busy-waiting. On each wake: process queued worker messages first (blockers, decisions, completion signals — messages are the authoritative signal, per Context Economy), make and record decisions, sync them to affected workers; `read_thread` only the workers that are silent beyond expectation or whose last message is ambiguous. Keep or reschedule the heartbeat if reports are still outstanding.
-- Mid-task stall: a started worker with no new activity across roughly three passes, not inside a long-running command and not waiting on a peer, gets a direct status request; if it stays silent through the next pass, decide — re-dispatch the remaining work to it, replace it (same archive/replace/broadcast procedure), or pull the work into the leader — and record the decision.
-- Replacement baseline: a replacement re-executes the full task from the integration branch in a fresh worktree. Only when the stuck worker left committed work the leader has inspected and verified may the replacement continue from that commit, with the dispatch stating exactly what is done and what remains.
+- Observe post-dispatch activity separately from pre-dispatch validation. Prefer `wait_threads` with real IDs and cursors, handling per-target errors and completion/attention events. Wait at most 60 seconds per call so user updates remain possible. A wait timeout alone is not a stall or a completion report.
+- If event waiting is unavailable, record the downgrade and use bounded status checks with backoff, not a busy loop. Default inactivity window: six minutes, then a direct status request and a further two-minute grace period. Check long-running commands, tool errors and peer dependencies before declaring a stall; persist timestamps and evidence.
+- Process authorized worker signals first; use `read_thread` for startup activity, ambiguity and suspected stalls. Missing message authorization means collect status and reports through authorized read/file paths; never instruct a worker to bypass host messaging rules.
+- Before replacement, stop and establish the old worker is quiescent. Archiving is not proof a process stopped. If cancellation or status is unsupported, preserve resources and report the blocker. Never replace a worker showing progress. Apply the recorded retry limit and configuration policy.
+- Replacement starts from the recorded base in a fresh verified worktree and passes the same initialization gate. Continue from prior committed work only after leader review, recording the new base and remaining scope explicitly. Update and broadcast the roster within authorized recipients.
+- Heartbeat defaults to none; only use an explicitly requested, host-supported scheduled follow-up. Track ownership and deletion. Do not create an automation just to monitor this task to completion where host rules prohibit it.
 
-Done when: every active worker has sent its completion signal (report file path + commit SHA).
+Done when: the leader has collected and verified every active worker completion signal (report path + commit SHA), by authorized messaging or explicit thread/file inspection. A completed chat turn alone is insufficient.
 
 ### 5. Report collection and merge orchestration
 
-Pause the report-waiting heartbeat before merging (final deletion happens in phase 6 — if rework goes back to a worker, re-enter phase-4-style polling for it first). Plan merge order by dependencies, risk, conflicts, and shared contracts. Then integrate one branch at a time:
+If a run-owned heartbeat exists, pause it before merging (final deletion happens in phase 6 — if rework goes back to a worker, re-enter phase-4-style polling for it first). Plan merge order by dependencies, risk, conflicts, and shared contracts. Then integrate one branch at a time:
 
 1. Read the worker's report file, then review the branch diff against that worker's dispatch — spec compliance (everything asked, nothing extra) and code quality.
 2. Review findings that need real rework go back to the owning worker as a fresh scoped dispatch with concrete findings; the leader fixes directly only if the worker is archived or the fix is small.
-3. Merge, resolving small mechanical conflicts directly, and run the relevant build/tests before touching the next branch.
+3. Confirm the report SHA is the expected worker branch tip, descends from its recorded base and contains only the reviewed scope; ensure the worker is quiescent and the integration checkout is clean. Merge, resolving small mechanical conflicts directly, and run the relevant build/tests before touching the next branch. If verification fails, stop integration and record it; do not merge the next worker or automatically reset user work.
 
 Per-branch review plus per-merge verification is what makes both defects and regressions attributable to one worker. Record each review, merge, and verification result in the state file.
 
@@ -136,26 +154,26 @@ Done when: all selected branches are reviewed and merged with per-merge verifica
 
 ### 6. Final leader review and repair
 
-Review the merged whole for cross-worker integration issues: contract mismatches, duplicated or conflicting logic, gaps between task boundaries, behavior that only breaks when the pieces meet. Branch internals were already reviewed at merge time (phase 5); re-open them only where integration evidence points. Fix problems directly, verify again, review the fix. Then confirm cleanup: every heartbeat this workflow created is deleted, leader-created worktrees are removed, and the run's state file is marked complete (leave the directory as an excluded audit record).
+Review the merged whole for cross-worker integration issues: contract mismatches, duplicated or conflicting logic, gaps between task boundaries, behavior that only breaks when the pieces meet. Branch internals were already reviewed at merge time (phase 5); re-open them only where integration evidence points. Fix problems directly, verify again, review the fix. Then perform safe cleanup below. Mark complete only when cleanup is verified; otherwise record `cleanup_pending` and the precise remaining resources. Leave the state as an excluded audit record.
 
 Done when: the final review passes and cleanup is confirmed in the state file.
 
 If the user asks for status at any point, report the roster, worker states, blockers, merge progress, and the next leader action.
 
-## Abort
+## Safe Cleanup and Abort
 
-If the user cancels the run, or the leader concludes it cannot continue, tear the team down — never just stop responding:
+Stop new dispatch on cancellation or fatal initialization failure. Request active workers to stop only within human-authorized messaging scope; collect status through reads if necessary. Do not claim workers stopped without evidence.
 
-1. Message every active worker to stop and commit any coherent work-in-progress on its branch.
-2. Delete every heartbeat automation this workflow created.
-3. Archive all worker threads.
-4. Report which branches hold unmerged commits, then remove leader-created worktrees the user does not want to keep.
-5. Mark the state file `aborted` with a one-line reason and leave it as the audit record.
+Before removing any worktree, preserve notes/reports outside that worktree and record their destination. Inspect tracked, untracked and ignored files, and record unmerged commits and their branch names. Never force removal, reset branches or discard user data. Managed worktrees use the host management API; manually created worktrees use `git worktree remove` only when safe. Never remove a primary, shared or unrelated worktree. Archive chats only as authorized; do not delete them.
+
+Delete only run-owned automations. If cleanup/stop/cancel is unavailable or fails, retain resources and record identifiers, paths, reason and required follow-up. On abort mark the outcome `aborted` and cleanup separately as complete/pending; on initialization failure mark `failed`. Never report full completion with unresolved resources or asynchronous work. Full durable recovery/automated archival is a later iteration; this version requires explicit preservation before cleanup.
 
 ## Reference Templates
 
 Load only the template needed for the current phase:
 
+- Preflight: `references/preflight-checklist.md`
+- Validate worker startup: `references/worker-startup-template.md`
 - Register a worker: `references/worker-registration-template.md`
 - Dispatch implementation work: `references/worker-dispatch-template.md`
 - Worker completion report: `references/worker-report-template.md`

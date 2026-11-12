@@ -3,7 +3,9 @@
 Use this after all selected worker branches are merged and the leader has completed the final review.
 
 ```text
-Threadweave task complete.
+Threadweave run outcome: <complete/failed/aborted/cleanup_pending>.
+Run ID: <run-id>
+Initialization failures / excluded workers: <attempts-and-reasons-or-none>
 
 Leader thread:
 - Thread ID: <leader-thread-id>
@@ -27,6 +29,9 @@ Final leader review:
 - Verification after final review: <commands/results>
 
 Cleanup:
+- Preserved report/notes locations: <paths>
+- Pending operations / retained worktrees / unmerged branches: <identities-and-reasons-or-none>
+- Unsupported or failed cleanup and next action: <details-or-none>
 - Heartbeat automations deleted: <yes/n-a>
 - Leader-created worker worktrees removed: <yes/n-a>
 

@@ -1,10 +1,14 @@
 # Worker Report Template
 
-Workers write this to `.threadweave/report.md` in their worktree root after implementation, self-review, verification, and commit — then send the leader a short message carrying only the `From:` header, `COMPLETE`, the report file path, and the commit SHA. Never paste this report into a message; the leader reads the file directly.
+Workers write this to `.threadweave/report.md` in their worktree root after implementation, self-review, verification, and commit — then send the leader a short message carrying only the `From:` header, `COMPLETE`, the report file path, and the commit SHA. Messaging requires direct human authorization valid under host rules. If unavailable, leave the completion signal in the worker response for leader inspection and record the limitation. Never paste this report into a message; the leader reads the file directly.
 
 ```text
 Worker complete and ready for leader integration.
 
+Run ID: <run-id>
+Working directory: <verified-worktree-root>
+Base commit: <verified-full-base-sha>
+Completion delivery: <authorized-message-or-response-for-inspection>
 Worker thread ID: <worker-thread-id>
 Role: <role>
 Branch: <worker-branch>
