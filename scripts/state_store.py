@@ -89,6 +89,54 @@ def read_state(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+def run_state_dir(repo_root, run_id):
+    """返回 leader checkout 内的 durable run 目录，不在任何 worker worktree 内。"""
+    return Path(repo_root) / '.threadweave' / run_id
+
+
+def run_state_path(repo_root, run_id):
+    """返回结构化状态文件的固定位置。"""
+    return run_state_dir(repo_root, run_id) / 'state.json'
+
+
+def locate_runs(repo_root):
+    """扫描 durable 位置，返回可按 mtime 排序的 run 记录。"""
+    root = Path(repo_root) / '.threadweave'
+    if not root.is_dir():
+        return []
+    runs = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        state_path = entry / 'state.json'
+        if not state_path.is_file():
+            continue
+        try:
+            state = read_state(state_path)
+        except (json.JSONDecodeError, OSError):
+            runs.append({
+                'runId': entry.name,
+                'path': str(state_path),
+                'status': 'unreadable',
+                'mtime': state_path.stat().st_mtime,
+            })
+            continue
+        runs.append({
+            'runId': state.get('runId', entry.name),
+            'path': str(state_path),
+            'status': state.get('status', 'unknown'),
+            'mtime': state_path.stat().st_mtime,
+        })
+    return sorted(runs, key=lambda r: r['mtime'])
+
+
+def latest_incomplete_run(repo_root):
+    """返回最近一个非终端、可读的 run；没有则返回 None。"""
+    terminal = {'complete', 'failed', 'aborted', 'unreadable'}
+    candidates = [r for r in locate_runs(repo_root) if r['status'] not in terminal]
+    return candidates[-1] if candidates else None
+
+
 class StateLock:
     """基于 flock 的 run 级排他锁；进程退出时由内核自动释放。"""
 
