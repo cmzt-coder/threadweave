@@ -186,4 +186,5 @@ Load only the template needed for the current phase:
 - Local helper CLI: `scripts/threadweave.py`
 - Host adapter interface: `scripts/host_adapter.py`
 - Controller skeleton: `scripts/controller.py`
+- Structured run log: `scripts/run_log.py`
 - Final leader report: `references/final-report-template.md`
