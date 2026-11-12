@@ -119,6 +119,10 @@ python3 tests/run_all.py
 当前 12 套测试、188 项断言通过。这些检查覆盖本地 Git 原语、schema/状态逻辑和
 fake adapter 控制器逻辑，不能替代真实 worker 冒烟。
 
+## 原创性说明
+
+本项目为原创实现，仅参考 `codex-thread-team-main.zip` 的设计思路，不包含、也不派生自该项目的代码。
+
 ## 许可证
 
 MIT 许可证，详见 [LICENSE](LICENSE)。

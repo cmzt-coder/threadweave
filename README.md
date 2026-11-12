@@ -120,6 +120,11 @@ This runs 12 suites and currently passes 188 assertions. These checks cover loca
 primitives, schema/state logic and fake-adapter controller logic; they do not replace a
 real worker smoke test.
 
+## Project origin
+
+This project is an original implementation. It only references the design ideas of
+`codex-thread-team-main.zip`; it does not include or derive code from that project.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
