@@ -35,6 +35,10 @@ check('replacement-limit-block',
                                {'thread_exists': False}, replacement_limit=1) == 'block')
 check('unknown-thread-revalidate',
       classify_worker_recovery(base_worker, dict(base_observed, thread_exists=None)) == 'revalidate')
+check('dispatch-intent-pending-revalidate',
+      classify_worker_recovery(
+          dict(base_worker, dispatchIntent={'result': 'pending'}),
+          base_observed) == 'revalidate')
 check('pending-client-revalidate',
       classify_worker_recovery(
           dict(base_worker, state='pending', threadId=None),

@@ -173,6 +173,26 @@ with tempfile.TemporaryDirectory(prefix='threadweave-host-fault-') as d:
     except ValueError:
         check('archive-name-traversal-rejected', True)
 
+    outside = root / 'outside'
+    outside.mkdir()
+    link_dir = root / '.threadweave' / 'run-link'
+    link_dir.parent.mkdir(parents=True, exist_ok=True)
+    link_dir.symlink_to(outside, target_is_directory=True)
+    try:
+        run_state_dir(root, 'run-link')
+        check('run-dir-symlink-rejected', False)
+    except ValueError:
+        check('run-dir-symlink-rejected', True)
+
+    legit_run = root / '.threadweave' / 'run-archive'
+    (legit_run / 'reports').mkdir(parents=True, exist_ok=True)
+    (legit_run / 'reports' / 'a').symlink_to(outside, target_is_directory=True)
+    try:
+        archive_artifacts(legit_run, 'a', {'report.md': source})
+        check('archive-role-symlink-rejected', False)
+    except ValueError:
+        check('archive-role-symlink-rejected', True)
+
 print(json.dumps({
     'passed': len(results),
     'checks': results,

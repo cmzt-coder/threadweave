@@ -46,7 +46,12 @@ def archive_artifacts(run_dir, role, files):
     """归档一组 artifact；返回本次写入的 manifest 条目。"""
     run_dir = Path(run_dir)
     _safe_segment(role, 'role')
-    target_dir = run_dir / 'reports' / role
+    reports_root = (run_dir / 'reports').resolve()
+    target_dir = (run_dir / 'reports' / role).resolve()
+    if target_dir != reports_root and reports_root not in target_dir.parents:
+        raise ValueError('archive target escapes reports root')
+    if (run_dir / 'reports' / role).is_symlink():
+        raise ValueError('role must not be a symlink')
     target_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = run_dir / 'archive-manifest.json'
     entries = []

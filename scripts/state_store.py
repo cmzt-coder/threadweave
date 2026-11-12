@@ -101,7 +101,10 @@ def _safe_segment(value, name):
 def run_state_dir(repo_root, run_id):
     """返回 leader checkout 内的 durable run 目录，不在任何 worker worktree 内。"""
     _safe_segment(run_id, 'run_id')
-    return Path(repo_root) / '.threadweave' / run_id
+    target = Path(repo_root) / '.threadweave' / run_id
+    if target.is_symlink():
+        raise ValueError('run_id must not be a symlink')
+    return target
 
 
 def run_state_path(repo_root, run_id):

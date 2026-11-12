@@ -8,7 +8,7 @@ project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from controller import Controller, StaleStateError  # noqa: E402
 from host_adapter import HostAdapter, UnsupportedHostAdapter  # noqa: E402
-from state_store import InvalidTransition, read_state, run_state_path  # noqa: E402
+from state_store import InvalidTransition, StateLock, read_state, run_state_path  # noqa: E402
 
 results = []
 
@@ -47,6 +47,19 @@ class FakeAdapter(HostAdapter):
 
     def archive_worktree(self, root):
         self.calls.append(('archive_worktree', root))
+
+
+class FailingSaveController(Controller):
+    def __init__(self, *args, fail_on=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.save_calls = 0
+        self.fail_on = fail_on
+
+    def save(self):
+        self.save_calls += 1
+        if self.save_calls == self.fail_on:
+            raise OSError('save failed')
+        super().save()
 
 
 def make_state():
@@ -116,6 +129,8 @@ with tempfile.TemporaryDirectory() as d:
         'branch': 'tw/a-1',
         'head': 'b' * 40,
         'status_porcelain': '',
+        'role': 'a',
+        'attempt': 1,
     }
     try:
         controller.dispatch('a', 1, 'bad dispatch', startup_report=bad_report, expected=expected)
@@ -132,6 +147,8 @@ with tempfile.TemporaryDirectory() as d:
         'branch': 'tw/a-1',
         'head': 'a' * 40,
         'status_porcelain': '',
+        'role': 'a',
+        'attempt': 1,
     }
     thread_id = controller.dispatch(
         'a', 1, 'do work', startup_report=good_report, expected=expected)
@@ -194,6 +211,72 @@ with tempfile.TemporaryDirectory() as d:
     check('send-failure-unknown',
           fail_saved['workers'][0]['dispatchIntent']['result'] == 'unknown')
 
+    wrong_role_controller = Controller(FakeAdapter(), d, 'run-wrong-role', make_state())
+    try:
+        wrong_role_controller.dispatch(
+            'a', 1, 'wrong role', startup_report=dict(good_report, role='b'),
+            expected=expected)
+        check('wrong-role-evidence-rejected', False)
+    except RuntimeError:
+        check('wrong-role-evidence-rejected', True)
+
+    stale_controller = Controller(FakeAdapter(), d, 'run-stale-evidence', make_state())
+    try:
+        stale_controller.dispatch(
+            'a', 1, 'stale',
+            startup_report=dict(good_report, observedAt='2020-01-01T00:00:00Z'),
+            expected=expected)
+        check('stale-evidence-rejected', False)
+    except RuntimeError:
+        check('stale-evidence-rejected', True)
+
+    ab_state = make_state()
+    ab_state['workers'].append({
+        'role': 'b', 'attempt': 1, 'state': 'ready', 'threadId': 't-b',
+        'branch': 'tw/b-1', 'baseSha': 'a' * 40,
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'deadline': '2026-11-12T10:05:00+08:00',
+        'lastObservation': '2026-11-12T10:00:00+08:00',
+        'errors': [],
+    })
+    ab_controller = Controller(FakeAdapter(), d, 'run-ab', ab_state)
+    ab_controller.dispatch('a', 1, 'a first', startup_report=good_report, expected=expected)
+    expected_b = dict(expected, branch='tw/b-1')
+    good_b = dict(good_report, role='b', branch='tw/b-1')
+    ab_controller.dispatch('b', 1, 'b second', startup_report=good_b, expected=expected_b)
+    ab_saved = read_state(run_state_path(d, 'run-ab'))
+    check('sequential-dispatch-a-b',
+          [w['state'] for w in ab_saved['workers']] == ['dispatched', 'dispatched'])
+    check('startup-evidence-persisted',
+          ab_saved['workers'][0]['startupEvidence']['role'] == 'a')
+
+    save_fail_adapter = FakeAdapter()
+    save_fail_controller = FailingSaveController(
+        save_fail_adapter, d, 'run-save-fail', make_state(), fail_on=1)
+    try:
+        save_fail_controller.dispatch(
+            'a', 1, 'save before send', startup_report=good_report, expected=expected)
+        check('pre-send-save-failure-rejected', False)
+    except OSError:
+        check('pre-send-save-failure-rejected', True)
+    check('pre-send-save-no-message',
+          not any(call[0] == 'send_message' for call in save_fail_adapter.calls))
+
+    post_adapter = FakeAdapter()
+    post_controller = FailingSaveController(
+        post_adapter, d, 'run-post-save-fail', make_state(), fail_on=2)
+    try:
+        post_controller.dispatch(
+            'a', 1, 'save after send', startup_report=good_report, expected=expected)
+        check('post-send-save-failure-raised', False)
+    except OSError:
+        check('post-send-save-failure-raised', True)
+    check('post-send-message-sent',
+          ('send_message', 't-a', 'save after send') in post_adapter.calls)
+    post_saved = read_state(run_state_path(d, 'run-post-save-fail'))
+    check('post-send-intent-pending',
+          post_saved['workers'][0]['dispatchIntent']['result'] == 'pending')
+
     try:
         controller.replace_worker('a', 1, replacement_limit=1)
         check('replace-first-ok', True)
@@ -226,6 +309,19 @@ with tempfile.TemporaryDirectory() as d:
         check('stale-revision-rejected', False)
     except StaleStateError:
         check('stale-revision-rejected', True)
+
+    bad_state = make_state()
+    bad_state['status'] = 'not-a-status'
+    bad_controller = Controller(FakeAdapter(), d, 'run-bad', bad_state)
+    try:
+        bad_controller.save()
+        check('invalid-state-save-rejected', False)
+    except ValueError:
+        check('invalid-state-save-rejected', True)
+    lock = StateLock(run_state_path(d, 'run-bad').with_suffix('.lock'))
+    lock.acquire()
+    lock.release()
+    check('lock-released-after-save-failure', True)
 
     try:
         Controller(object(), d, 'run-2', make_state())

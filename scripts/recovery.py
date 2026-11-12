@@ -16,6 +16,11 @@ def classify_worker_recovery(worker, observed, replacement_limit=1):
     if observed.get('thread_exists') is None:
         return 'revalidate'
 
+    # 已记录派发意图但结果未确认：先核对，不盲目重发或重建
+    intent = worker.get('dispatchIntent', {})
+    if intent.get('result') in ('pending', 'unknown'):
+        return 'revalidate'
+
     # pending 有 clientThreadId 但无真实 threadId：先解析，不 recreation
     if state == 'pending' and not worker.get('threadId'):
         return 'revalidate'

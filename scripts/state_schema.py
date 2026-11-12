@@ -69,6 +69,22 @@ def load_schema(schema_path):
     return json.loads(Path(schema_path).read_text(encoding='utf-8'))
 
 
+def validate_invariants(state):
+    """校验 schema 无法表达的跨字段领域不变量。"""
+    errors = []
+    workers = state.get('workers', [])
+    identities = [(w.get('role'), w.get('attempt')) for w in workers]
+    if len(identities) != len(set(identities)):
+        errors.append('duplicate worker role/attempt')
+    if state.get('status') == 'complete':
+        if state.get('finalReview', {}).get('status') != 'complete':
+            errors.append('complete run requires complete finalReview')
+        if state.get('cleanup', {}).get('status') != 'complete':
+            errors.append('complete run requires complete cleanup')
+    if errors:
+        raise ValueError('state invariant violation: ' + '; '.join(errors))
+
+
 def validate_state(state, schema_path=None):
     """校验 run-state；失败抛 ValueError，避免非法状态落盘。"""
     if schema_path is None:
@@ -76,4 +92,5 @@ def validate_state(state, schema_path=None):
     errors = validate(state, load_schema(schema_path))
     if errors:
         raise ValueError('state schema validation failed: ' + '; '.join(errors))
+    validate_invariants(state)
     return state

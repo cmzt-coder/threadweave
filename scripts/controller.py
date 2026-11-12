@@ -83,6 +83,20 @@ class Controller:
         integration_head = expected.get('integration_head')
         if integration_head != self.state['integration']['baseSha']:
             raise RuntimeError('integration HEAD drifted from recorded base')
+        report_role = startup_report.get('role')
+        report_attempt = startup_report.get('attempt')
+        if report_role is not None and report_role != role:
+            raise RuntimeError('startup evidence belongs to another role')
+        if report_attempt is not None and report_attempt != attempt:
+            raise RuntimeError('startup evidence belongs to another attempt')
+        observed_at = startup_report.get('observedAt')
+        if observed_at is not None:
+            from datetime import datetime
+            observed = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
+            age = (datetime.now(observed.tzinfo) - observed).total_seconds()
+            max_age = expected.get('max_evidence_age_seconds', 300)
+            if age > max_age:
+                raise RuntimeError('startup evidence is stale')
         allowed = {'ready', 'dispatched', 'reported', 'integrated', 'archived'}
         blocked = [
             f'{w.get("role")}#{w.get("attempt")}:{w.get("state")}'
@@ -106,6 +120,17 @@ class Controller:
             worker['dispatchIntent']['result'] = 'unknown'
             self.save()
             raise
+        worker['startupEvidence'] = {
+            'role': report_role if report_role is not None else role,
+            'attempt': report_attempt if report_attempt is not None else attempt,
+            'cwd': startup_report['cwd'],
+            'worktree_root': startup_report['worktree_root'],
+            'git_common_dir': startup_report['git_common_dir'],
+            'branch': startup_report['branch'],
+            'head': startup_report['head'],
+            'status_porcelain': startup_report['status_porcelain'],
+            'validatedAt': _now_iso(),
+        }
         worker['dispatchIntent']['result'] = 'sent'
         worker['dispatchAt'] = _now_iso()
         self.transition_worker(role, attempt, 'dispatched')

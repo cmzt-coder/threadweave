@@ -8,9 +8,13 @@ items、properties 与 anyOf。该脚本证明示例符合声明的 schema，并
 import copy
 import json
 import re
+import sys
 from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project / 'scripts'))
+from state_schema import validate_invariants  # noqa: E402
+
 results = []
 
 
@@ -113,6 +117,22 @@ identities = [(w['role'], w['attempt']) for w in example['workers']]
 check('worker-role-attempt-unique', len(identities) == len(set(identities)))
 check('merge-order-matches-log',
       example['mergeOrder'] == [x['branch'] for x in example['integrationLog']])
+
+duplicate = copy.deepcopy(example)
+duplicate['workers'].append(copy.deepcopy(duplicate['workers'][0]))
+try:
+    validate_invariants(duplicate)
+    check('duplicate-worker-identity-rejected', False)
+except ValueError:
+    check('duplicate-worker-identity-rejected', True)
+
+bad_complete = copy.deepcopy(example)
+bad_complete['cleanup']['status'] = 'pending'
+try:
+    validate_invariants(bad_complete)
+    check('complete-requires-cleanup-rejected', False)
+except ValueError:
+    check('complete-requires-cleanup-rejected', True)
 
 print(json.dumps({
     'passed': len(results),

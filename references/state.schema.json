@@ -322,6 +322,58 @@
                 ]
               }
             }
+          },
+          "startupEvidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "attempt",
+              "cwd",
+              "worktree_root",
+              "git_common_dir",
+              "branch",
+              "head",
+              "status_porcelain",
+              "validatedAt"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worktree_root": {
+                "type": "string",
+                "minLength": 1
+              },
+              "git_common_dir": {
+                "type": "string",
+                "minLength": 1
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "status_porcelain": {
+                "type": "string"
+              },
+              "validatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
           }
         }
       }
