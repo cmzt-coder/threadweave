@@ -187,4 +187,5 @@ Load only the template needed for the current phase:
 - Host adapter interface: `scripts/host_adapter.py`
 - Controller skeleton: `scripts/controller.py`
 - Structured run log: `scripts/run_log.py`
+- Budget/stall reference: `scripts/budget.py`
 - Final leader report: `references/final-report-template.md`
