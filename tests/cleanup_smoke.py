@@ -105,6 +105,26 @@ observations = {
     }
 }
 plan = build_cleanup_plan(state, observations)
+stale_state = {'workers': [{'role': 'a', 'attempt': 1}]}
+stale_observations = {
+    'a#1': {
+        'observedAt': '2026-11-12T10:00:00+08:00',
+        'worktree': clean,
+        'report_archived': True,
+        'branch': {
+            'branch_exists': True, 'merged_into_integration': True,
+            'owned_by_run': True, 'checked_out': False,
+        },
+        'stop': {
+            'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True,
+        },
+    }
+}
+stale_plan = build_cleanup_plan(
+    stale_state, stale_observations, max_evidence_age_seconds=300,
+    now='2026-11-12T10:10:00+08:00')
+check('stale-cleanup-protected', stale_plan['a#1']['worktree'] == 'protect_stale')
+
 check('plan-actions',
       plan['a#1'] == {'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped'})
 

@@ -1,5 +1,8 @@
 """Threadweave 清理分类参考实现。
 
+清理计划可附带观察时间；超过允许时效时返回 protect_stale。
+
+
 对 worktree / branch / report / automation 给出幂等清理动作，并检查停止证据。
 纯函数，不执行删除，也不调用宿主 API；调用方必须依据动作再执行安全清理。
 """
@@ -69,12 +72,31 @@ def verify_stop_evidence(observed):
     return 'stopped' if all(observed.get(key) for key in required) else 'unverified'
 
 
-def build_cleanup_plan(state, observations):
+def build_cleanup_plan(state, observations, max_evidence_age_seconds=None, now=None):
     """为每个 worker 生成 worktree / branch / 停止证据动作。"""
     plan = {}
     for worker in state.get('workers', []):
         key = f"{worker.get('role')}#{worker.get('attempt')}"
         observed = observations.get(key, {})
+        if max_evidence_age_seconds is not None:
+            from datetime import datetime
+            observed_at = observed.get('observedAt')
+            stale = True
+            if observed_at:
+                try:
+                    observed_dt = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
+                    now_dt = (datetime.fromisoformat(now.replace('Z', '+00:00'))
+                              if now else datetime.now(observed_dt.tzinfo))
+                    stale = (now_dt - observed_dt).total_seconds() > max_evidence_age_seconds
+                except ValueError:
+                    stale = True
+            if stale:
+                plan[key] = {
+                    'worktree': 'protect_stale',
+                    'branch': 'protect_stale',
+                    'stop_evidence': 'unverified',
+                }
+                continue
         worktree_observed = dict(observed.get('worktree', {}))
         worktree_observed.setdefault('stop', observed.get('stop', {}))
         plan[key] = {

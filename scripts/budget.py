@@ -22,10 +22,14 @@ def check_initialization(created_at, now, limit_seconds=300, worker_state=None):
 
 
 def check_stall(last_progress_at, now, inactivity_seconds=360, grace_seconds=120,
-                status_requested_at=None, worker_state=None):
+                status_requested_at=None, grace_deadline=None, worker_state=None):
     """区分无活动请求、宽限期与停滞；终态不适用。"""
     if worker_state in TERMINAL_STATES:
         return {'status': 'not_applicable', 'elapsedSeconds': 0}
+    if grace_deadline is not None:
+        deadline = _as_datetime(grace_deadline)
+        status = 'stalled' if _as_datetime(now) >= deadline else 'grace'
+        return {'status': status, 'graceDeadline': grace_deadline}
     if status_requested_at is not None:
         if _as_datetime(last_progress_at) > _as_datetime(status_requested_at):
             status_requested_at = None
@@ -70,13 +74,14 @@ def summarize_budget(state, observations, now,
         created_at = worker.get('createdAt')
         last_progress = worker.get('lastProgressAt') or worker.get('lastObservation')
         status_requested = worker.get('statusRequestedAt')
+        grace_deadline = worker.get('graceDeadline')
         summary[key] = {
             'initialization': (
                 check_initialization(created_at, now, initialization_limit, worker.get('state'))
                 if created_at else {'status': 'unknown'}),
             'stall': (
                 check_stall(last_progress, now, inactivity, grace,
-                            status_requested, worker.get('state'))
+                            status_requested, grace_deadline, worker.get('state'))
                 if last_progress else {'status': 'unknown'}),
             'retry': check_retry(worker.get('attempt', 1), replacement_limit),
         }

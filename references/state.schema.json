@@ -413,6 +413,14 @@
           "statusRequestedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "lastCheckedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "graceDeadline": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

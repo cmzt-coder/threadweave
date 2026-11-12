@@ -102,6 +102,17 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
     check('inspect-marks-unreadable',
           any(run['status'] == 'unreadable' for run in inspect(repo)['runs']))
 
+    invalid_state = repo / '.threadweave' / 'run-invalid' / 'state.json'
+    invalid_state.parent.mkdir(parents=True, exist_ok=True)
+    invalid_state.write_text('{}', encoding='utf-8')
+    check('doctor-invalid-schema', not doctor(repo)['ok'])
+
+    null_workers = repo / '.threadweave' / 'run-null-workers' / 'state.json'
+    null_workers.parent.mkdir(parents=True, exist_ok=True)
+    null_workers.write_text(json.dumps({'workers': None}), encoding='utf-8')
+    check('inspect-null-workers',
+          any(run.get('status') == 'invalid' for run in inspect(repo)['runs']))
+
 print(json.dumps({
     'passed': len(results),
     'checks': results,

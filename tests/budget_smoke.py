@@ -31,6 +31,12 @@ check('stall-request-status',
 check('stall-stalled',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00',
                   status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'stalled')
+check('grace-deadline-stalled',
+      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:12:00+08:00',
+                  grace_deadline='2026-11-12T10:10:00+08:00')['status'] == 'stalled')
+check('grace-deadline-grace',
+      check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00',
+                  grace_deadline='2026-11-12T10:10:00+08:00')['status'] == 'grace')
 check('stall-new-progress-overrides-request',
       check_stall('2026-11-12T10:09:00+08:00', '2026-11-12T10:10:00+08:00',
                   status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'ok')
@@ -65,6 +71,21 @@ summary = summarize_budget(state, {}, '2026-11-12T10:12:00+08:00')
 check('summarize-worker', set(summary) == {'a#1'})
 check('summarize-stall-status', summary['a#1']['stall']['status'] == 'request_status')
 check('summarize-retry-ok', summary['a#1']['retry']['status'] == 'ok')
+
+persisted_state = {'workers': [{
+    'role': 'a', 'attempt': 1, 'state': 'running',
+    'createdAt': '2026-11-12T10:00:00+08:00',
+    'lastObservation': '2026-11-12T10:00:00+08:00',
+    'lastProgressAt': '2026-11-12T10:00:00+08:00',
+    'statusRequestedAt': '2026-11-12T10:07:00+08:00',
+    'graceDeadline': '2026-11-12T10:10:00+08:00',
+}]}
+summary = summarize_budget(persisted_state, {}, '2026-11-12T10:11:00+08:00')
+check('summarize-grace-deadline', summary['a#1']['stall']['status'] == 'stalled')
+roundtrip = json.loads(json.dumps(persisted_state))
+check('summarize-roundtrip',
+      summarize_budget(persisted_state, {}, '2026-11-12T10:11:00+08:00') ==
+      summarize_budget(roundtrip, {}, '2026-11-12T10:11:00+08:00'))
 
 print(json.dumps({
     'passed': len(results),

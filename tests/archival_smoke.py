@@ -131,6 +131,22 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-') as d:
     check('manifest-retry-succeeds',
           (manifest_fail_dir / 'archive-manifest.json').is_file())
 
+    escape_dir = run_dir / 'escape-check'
+    escape_dir.mkdir(parents=True, exist_ok=True)
+    escape_target = worker / 'outside.md'
+    escape_target.write_text('outside', encoding='utf-8')
+    escape_manifest = [{
+        'role': 'a', 'attempt': 1, 'revision': 1, 'name': 'outside.md',
+        'source': str(escape_target), 'target': str(escape_target),
+        'sha256': '0' * 64, 'size': 7,
+        'archivedAt': '2026-11-12T10:00:00+08:00',
+    }]
+    (escape_dir / 'archive-manifest.json').write_text(
+        json.dumps(escape_manifest), encoding='utf-8')
+    problems = verify_archive(escape_dir, [('a', 1, 1, 'outside.md')])
+    check('manifest-target-escape-rejected',
+          any('escapes reports root' in problem for problem in problems))
+
     attempt2_source = worker / 'report-attempt2.md'
     attempt2_source.write_text('# Attempt 2' + chr(10), encoding='utf-8')
     archive_artifacts(run_dir, 'a', {'report.md': attempt2_source}, attempt=2, revision=1)

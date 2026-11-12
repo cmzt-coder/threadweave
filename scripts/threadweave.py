@@ -40,7 +40,7 @@ def status(repo):
 
 
 def inspect(repo):
-    """只读列出每个 run 的关键状态。"""
+    """只读列出每个 run 的关键状态；异常结构标记 invalid。"""
     details = []
     for run in locate_runs(repo):
         try:
@@ -51,24 +51,40 @@ def inspect(repo):
         if not isinstance(state, dict):
             details.append({'runId': run['runId'], 'status': 'unreadable'})
             continue
+        workers = state.get('workers')
+        if not isinstance(workers, list):
+            details.append({'runId': run['runId'], 'status': 'invalid', 'workers': []})
+            continue
         details.append({
             'runId': run['runId'],
             'status': state.get('status'),
             'revision': state.get('revision', 0),
             'workers': [
                 {'role': w.get('role'), 'attempt': w.get('attempt'), 'state': w.get('state')}
-                for w in state.get('workers', [])
+                for w in workers
             ],
         })
     return {'runs': details}
 
 
 def doctor(repo):
-    """只读诊断状态目录，返回问题列表。"""
+    """只读诊断状态目录：schema、runId、不变量与损坏状态。"""
+    from state_schema import validate_state
     problems = []
     for run in locate_runs(repo):
         if run['status'] == 'unreadable':
             problems.append(f"{run['runId']}: unreadable state")
+            continue
+        try:
+            state = read_state(run['path'])
+            if not isinstance(state, dict):
+                problems.append(f"{run['runId']}: state is not an object")
+                continue
+            if state.get('runId') != Path(run['path']).parent.name:
+                problems.append(f"{run['runId']}: runId does not match directory")
+            validate_state(state)
+        except (ValueError, OSError) as exc:
+            problems.append(f"{run['runId']}: {exc}")
     return {'ok': not problems, 'problems': problems}
 
 

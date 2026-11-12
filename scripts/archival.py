@@ -121,6 +121,7 @@ def verify_archive(run_dir, expected):
         (e['role'], e.get('attempt', 1), e.get('revision', 1), e['name']): e
         for e in _load_manifest(manifest_path)
     }
+    reports_root = (Path(run_dir) / 'reports').resolve()
     problems = []
     for item in expected:
         if len(item) == 4:
@@ -133,6 +134,10 @@ def verify_archive(run_dir, expected):
             problems.append(f'missing entry: {role}/{name}')
             continue
         target = Path(entry['target'])
+        resolved_target = target.resolve()
+        if resolved_target != reports_root and reports_root not in resolved_target.parents:
+            problems.append(f'target escapes reports root: {target}')
+            continue
         if not target.is_file():
             problems.append(f'missing file: {target}')
         elif _sha256(target) != entry['sha256']:
