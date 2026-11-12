@@ -51,6 +51,26 @@ leader 严格按六个阶段执行,每个阶段都有明确的退出条件:
 
 skill 自带的校准例子:**好的拆分**——一个 worker 写 API 端点,一个写消费它的前端页面,一个写迁移和种子数据,文件几乎不重叠,唯一的共享契约(API schema)由 leader 提前锁死。**坏的拆分**——三个 worker 重构同一个核心模块,合并和审查成本吃光并行收益。
 
+## 快速开始
+
+前置条件：Codex 支持真实 thread tools、Git，且目标仓库已登记为 Codex 项目。
+
+1. 安装 skill：
+
+```bash
+git clone https://github.com/cmzt-coder/threadweave.git "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
+```
+
+2. 重启 Codex 让 skill 生效。
+3. 把目标仓库根目录登记为 Codex 项目。
+4. 发起任务：
+
+```text
+用 $threadweave 把这个任务拆给两个 worker，各自独立 worktree 和分支，最后串行集成。
+```
+
+故障排查、恢复与清理见 [使用教程](docs/使用教程.md)。
+
 ## 安装
 
 克隆到 Codex skills 目录,命名为 `threadweave`:

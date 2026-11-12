@@ -51,6 +51,26 @@ Direct execution wins when the split would yield only one or two small subtasks,
 
 Calibration, straight from the skill: a **good split** is one worker on an API endpoint, one on the frontend page consuming it, one on the migration and seed data — files barely overlap and the one shared contract (the API schema) is fixed by the leader up front. A **bad split** is three workers refactoring the same core module — merge and review cost erases the parallel gain.
 
+## Quick start
+
+Prerequisites: Codex with real thread tools, Git, and the target repository registered as a Codex project.
+
+1. Install the skill:
+
+```bash
+git clone https://github.com/cmzt-coder/threadweave.git "${CODEX_HOME:-$HOME/.codex}/skills/threadweave"
+```
+
+2. Restart Codex so the skill is picked up.
+3. Register the target repository root as a Codex project.
+4. Start a task:
+
+```text
+Use $threadweave to split this task across two workers, each with its own worktree and branch, then integrate serially.
+```
+
+See the [usage guide](docs/usage-guide.md) for troubleshooting, recovery, and cleanup.
+
 ## Install
 
 Clone into your Codex skills directory as `threadweave`:
