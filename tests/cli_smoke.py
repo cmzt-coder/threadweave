@@ -71,7 +71,10 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
                 'owned_by_run': True, 'is_primary': False,
             },
             'report_archived': True,
-            'branch': {'branch_exists': True, 'merged_into_integration': True},
+            'branch': {
+                'branch_exists': True, 'merged_into_integration': True,
+                'owned_by_run': True, 'checked_out': False,
+            },
             'stop': {'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True},
         }
     }), encoding='utf-8')

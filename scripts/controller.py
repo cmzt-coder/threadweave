@@ -31,9 +31,11 @@ class Controller:
         self.state_path = run_state_path(repo_root, run_id)
 
     def save(self):
-        """加锁、校验 revision 与 schema 后原子写入；拒绝旧快照覆盖。"""
+        """加锁、校验 revision 与 schema，成功写入后才替换内存。"""
         self.state.setdefault('revision', 0)
         self.state.setdefault('updatedAt', _now_iso())
+        if self.state.get('runId') != self.run_id:
+            raise ValueError('state runId does not match controller run_id')
         lock = StateLock(self.state_path.with_suffix('.lock'))
         lock.acquire()
         try:
@@ -44,10 +46,14 @@ class Controller:
                     raise StaleStateError(
                         f'stale state: disk revision {disk_revision}, '
                         f'memory revision {self.state["revision"]}')
-            self.state['updatedAt'] = _now_iso()
-            validate_state(self.state)
-            self.state['revision'] += 1
-            write_state_atomic(self.state_path, self.state)
+            import copy
+            candidate = copy.deepcopy(self.state)
+            candidate['updatedAt'] = _now_iso()
+            candidate['revision'] = self.state['revision'] + 1
+            validate_state(candidate)
+            write_state_atomic(self.state_path, candidate)
+            self.state['revision'] = candidate['revision']
+            self.state['updatedAt'] = candidate['updatedAt']
         finally:
             lock.release()
 
@@ -55,6 +61,28 @@ class Controller:
         validate_transition('run', self.state['status'], new_status)
         self.state['status'] = new_status
         self.save()
+
+    def _ensure_external_action_allowed(self, worker, action):
+        run_status = self.state.get('status')
+        if run_status in ('aborted', 'failed', 'complete'):
+            raise RuntimeError(f'run is {run_status}; {action} blocked')
+        if worker.get('stopStatus') in ('requested', 'confirmed'):
+            raise RuntimeError(
+                f'worker {worker.get("role")}#{worker.get("attempt")} is stopping; {action} blocked')
+        intent = worker.get('dispatchIntent', {})
+        if action == 'dispatch' and intent.get('result') in ('pending', 'unknown'):
+            raise RuntimeError('unresolved dispatch intent; reconcile before retrying')
+
+    def _active_workers(self):
+        """每个角色只保留 attempt 最大的有效 worker；历史记录继续审计。"""
+        by_role = {}
+        for worker in self.state.get('workers', []):
+            role = worker.get('role')
+            attempt = worker.get('attempt', 1)
+            current = by_role.get(role)
+            if current is None or attempt > current.get('attempt', 0):
+                by_role[role] = worker
+        return by_role
 
     def _worker(self, role, attempt):
         for worker in self.state.get('workers', []):
@@ -71,12 +99,26 @@ class Controller:
     def dispatch(self, role, attempt, message, startup_report, expected):
         """派发前校验团队门禁、启动证据与集成 HEAD；发送前持久化 intent。"""
         worker = self._worker(role, attempt)
+        self._ensure_external_action_allowed(worker, 'dispatch')
         if worker['state'] != 'ready':
             raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected ready')
         if not worker.get('threadId'):
             raise RuntimeError(f'worker {role}#{attempt} has no real threadId')
         if startup_report is None or expected is None:
             raise ValueError('startup_report and expected are required')
+        for field in ('role', 'attempt', 'observedAt'):
+            if field not in startup_report:
+                raise ValueError(f'startup_report missing {field}')
+        expected = dict(expected)
+        if expected.get('branch') not in (None, worker['branch']):
+            raise RuntimeError('expected branch does not match persisted worker')
+        if expected.get('base') not in (None, worker['baseSha']):
+            raise RuntimeError('expected base does not match persisted worker')
+        expected['branch'] = worker['branch']
+        expected['base'] = worker['baseSha']
+        expected['role'] = role
+        expected['attempt'] = attempt
+        expected.setdefault('common_dir', self.state['project']['commonDirectory'])
         ok, reasons = validate_startup(startup_report, expected)
         if not ok:
             raise RuntimeError(f'startup validation failed: {reasons}')
@@ -97,10 +139,10 @@ class Controller:
             max_age = expected.get('max_evidence_age_seconds', 300)
             if age > max_age:
                 raise RuntimeError('startup evidence is stale')
-        allowed = {'ready', 'dispatched', 'reported', 'integrated', 'archived'}
+        allowed = {'ready', 'dispatched', 'running', 'reported', 'integrated', 'archived'}
         blocked = [
-            f'{w.get("role")}#{w.get("attempt")}:{w.get("state")}'
-            for w in self.state.get('workers', [])
+            f'{role_name}#{w.get("attempt")}:{w.get("state")}'
+            for role_name, w in self._active_workers().items()
             if w.get('state') not in allowed
         ]
         if blocked:
@@ -133,6 +175,8 @@ class Controller:
         }
         worker['dispatchIntent']['result'] = 'sent'
         worker['dispatchAt'] = _now_iso()
+        worker['activityRevision'] = worker.get('activityRevision', 0) + 1
+        worker.pop('stopStatus', None)
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']
 
@@ -151,6 +195,7 @@ class Controller:
             raise RuntimeError('stop evidence incomplete')
         worker['stopConfirmedAt'] = _now_iso()
         worker['stopStatus'] = 'confirmed'
+        worker['stopActivityRevision'] = worker.get('activityRevision', 0)
         self.save()
         return worker['stopStatus']
 
@@ -159,8 +204,24 @@ class Controller:
         worker = self._worker(role, attempt)
         worker['reworkCount'] = worker.get('reworkCount', 0) + 1
         worker['reworkNotes'] = notes
+        worker['activityRevision'] = worker.get('activityRevision', 0) + 1
+        worker.pop('stopStatus', None)
+        worker.pop('stopActivityRevision', None)
         self.transition_worker(role, attempt, 'running')
         return worker['reworkCount']
+
+    def resolve_dispatch(self, role, attempt, result):
+        """收敛 pending/unknown 的派发意图；不发送任何消息。"""
+        if result not in ('sent', 'not_sent', 'unknown'):
+            raise ValueError('result must be sent/not_sent/unknown')
+        worker = self._worker(role, attempt)
+        intent = worker.get('dispatchIntent')
+        if not intent:
+            raise RuntimeError('no dispatch intent to resolve')
+        intent['result'] = result
+        intent['resolvedAt'] = _now_iso()
+        self.save()
+        return intent['result']
 
     def replace_worker(self, role, attempt, replacement_limit=None):
         """替换前要求停止证据、无后续 attempt，并从持久状态读取上限。"""
@@ -169,6 +230,8 @@ class Controller:
             replacement_limit = self.state.get('limits', {}).get('replacementPerRole', 1)
         if worker.get('stopStatus') != 'confirmed':
             raise RuntimeError('stop evidence not confirmed')
+        if worker.get('stopActivityRevision') != worker.get('activityRevision', 0):
+            raise RuntimeError('stop evidence is for an older activity revision')
         if any(
             w.get('role') == role and w.get('attempt', 0) > attempt
             for w in self.state.get('workers', [])
@@ -197,6 +260,9 @@ class Controller:
 
     def create_worker(self, prompt, project_id, timeout_seconds=300):
         """创建 worker；超时记录证据后抛出，不自动重试或发送消息。"""
+        if self.state.get('status') in ('aborted', 'failed', 'complete'):
+            raise RuntimeError(
+                f'run is {self.state.get("status")}; create_worker blocked')
         try:
             if getattr(self.adapter, 'capabilities', {}).get('create_timeout'):
                 return self.adapter.create_worker(

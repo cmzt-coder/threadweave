@@ -2,6 +2,8 @@
 import json
 import sys
 import tempfile
+from datetime import datetime, timezone
+from unittest.mock import patch
 from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
@@ -49,6 +51,9 @@ class FakeAdapter(HostAdapter):
         self.calls.append(('archive_worktree', root))
 
 
+NOW = datetime.now(timezone.utc).astimezone().isoformat()
+
+
 class FailingSaveController(Controller):
     def __init__(self, *args, fail_on=1, **kwargs):
         super().__init__(*args, **kwargs)
@@ -62,9 +67,9 @@ class FailingSaveController(Controller):
         super().save()
 
 
-def make_state():
+def make_state(run_id='run-1'):
     return {
-        'schemaVersion': '1.0', 'runId': 'run-1',
+        'schemaVersion': '1.0', 'runId': run_id,
         'createdAt': '2026-11-12T10:00:00+08:00',
         'updatedAt': '2026-11-12T10:00:00+08:00',
         'status': 'dispatching',
@@ -102,7 +107,7 @@ def make_state():
 
 with tempfile.TemporaryDirectory() as d:
     adapter = FakeAdapter()
-    controller = Controller(adapter, d, 'run-1', make_state())
+    controller = Controller(adapter, d, 'run-1', make_state('run-1'))
     controller.save()
     check('state-file-written', run_state_path(d, 'run-1').is_file())
 
@@ -131,6 +136,7 @@ with tempfile.TemporaryDirectory() as d:
         'status_porcelain': '',
         'role': 'a',
         'attempt': 1,
+        'observedAt': NOW,
     }
     try:
         controller.dispatch('a', 1, 'bad dispatch', startup_report=bad_report, expected=expected)
@@ -149,6 +155,7 @@ with tempfile.TemporaryDirectory() as d:
         'status_porcelain': '',
         'role': 'a',
         'attempt': 1,
+        'observedAt': NOW,
     }
     thread_id = controller.dispatch(
         'a', 1, 'do work', startup_report=good_report, expected=expected)
@@ -163,7 +170,7 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('duplicate-dispatch-rejected', True)
 
-    missing_controller = Controller(FakeAdapter(), d, 'run-missing', make_state())
+    missing_controller = Controller(FakeAdapter(), d, 'run-missing', make_state('run-missing'))
     try:
         missing_controller.dispatch('a', 1, 'missing', startup_report=None, expected=expected)
         check('missing-startup-rejected', False)
@@ -171,7 +178,7 @@ with tempfile.TemporaryDirectory() as d:
         check('missing-startup-rejected', True)
 
     drift_expected = dict(expected, integration_head='b' * 40)
-    drift_controller = Controller(FakeAdapter(), d, 'run-drift', make_state())
+    drift_controller = Controller(FakeAdapter(), d, 'run-drift', make_state('run-drift'))
     try:
         drift_controller.dispatch(
             'a', 1, 'drift', startup_report=good_report, expected=drift_expected)
@@ -179,7 +186,7 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('integration-drift-rejected', True)
 
-    team_state = make_state()
+    team_state = make_state('run-team')
     team_state['workers'].append({
         'role': 'b', 'attempt': 1, 'state': 'pending', 'threadId': None,
         'branch': 'tw/b-1', 'baseSha': 'a' * 40,
@@ -200,7 +207,7 @@ with tempfile.TemporaryDirectory() as d:
           read_state(run_state_path(d, 'run-1'))['workers'][0]['dispatchIntent']['result'] == 'sent')
 
     fail_adapter = FakeAdapter(send_error=RuntimeError('send failed'))
-    fail_controller = Controller(fail_adapter, d, 'run-send-fail', make_state())
+    fail_controller = Controller(fail_adapter, d, 'run-send-fail', make_state('run-send-fail'))
     try:
         fail_controller.dispatch(
             'a', 1, 'fail', startup_report=good_report, expected=expected)
@@ -211,7 +218,7 @@ with tempfile.TemporaryDirectory() as d:
     check('send-failure-unknown',
           fail_saved['workers'][0]['dispatchIntent']['result'] == 'unknown')
 
-    wrong_role_controller = Controller(FakeAdapter(), d, 'run-wrong-role', make_state())
+    wrong_role_controller = Controller(FakeAdapter(), d, 'run-wrong-role', make_state('run-wrong-role'))
     try:
         wrong_role_controller.dispatch(
             'a', 1, 'wrong role', startup_report=dict(good_report, role='b'),
@@ -220,7 +227,7 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('wrong-role-evidence-rejected', True)
 
-    stale_controller = Controller(FakeAdapter(), d, 'run-stale-evidence', make_state())
+    stale_controller = Controller(FakeAdapter(), d, 'run-stale-evidence', make_state('run-stale-evidence'))
     try:
         stale_controller.dispatch(
             'a', 1, 'stale',
@@ -230,7 +237,43 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('stale-evidence-rejected', True)
 
-    ab_state = make_state()
+    missing_observed = dict(good_report)
+    missing_observed.pop('observedAt')
+    missing_observed_controller = Controller(
+        FakeAdapter(), d, 'run-missing-observed', make_state('run-missing-observed'))
+    try:
+        missing_observed_controller.dispatch(
+            'a', 1, 'missing observed', startup_report=missing_observed, expected=expected)
+        check('missing-observed-at-rejected', False)
+    except ValueError:
+        check('missing-observed-at-rejected', True)
+
+    persisted_branch_controller = Controller(
+        FakeAdapter(), d, 'run-persisted-branch', make_state('run-persisted-branch'))
+    try:
+        persisted_branch_controller.dispatch(
+            'a', 1, 'wrong branch',
+            startup_report=dict(good_report, branch='wrong-branch'),
+            expected=dict(expected, branch='wrong-branch'))
+        check('persisted-branch-mismatch-rejected', False)
+    except RuntimeError:
+        check('persisted-branch-mismatch-rejected', True)
+
+    stop_rework_state = make_state('run-stop-rework')
+    stop_rework_state['workers'][0]['state'] = 'reported'
+    stop_rework_controller = Controller(
+        FakeAdapter(), d, 'run-stop-rework', stop_rework_state)
+    stop_rework_controller.request_stop('a', 1)
+    stop_rework_controller.confirm_stop(
+        'a', 1, idle=True, final_answer_present=True, no_active_turn=True)
+    stop_rework_controller.rework('a', 1, notes='rework')
+    try:
+        stop_rework_controller.replace_worker('a', 1)
+        check('rework-invalidates-stop', False)
+    except RuntimeError:
+        check('rework-invalidates-stop', True)
+
+    ab_state = make_state('run-ab')
     ab_state['workers'].append({
         'role': 'b', 'attempt': 1, 'state': 'ready', 'threadId': 't-b',
         'branch': 'tw/b-1', 'baseSha': 'a' * 40,
@@ -250,9 +293,88 @@ with tempfile.TemporaryDirectory() as d:
     check('startup-evidence-persisted',
           ab_saved['workers'][0]['startupEvidence']['role'] == 'a')
 
+    aborted_state = make_state('run-aborted')
+    aborted_state['status'] = 'aborted'
+    aborted_controller = Controller(FakeAdapter(), d, 'run-aborted', aborted_state)
+    try:
+        aborted_controller.dispatch(
+            'a', 1, 'aborted', startup_report=good_report, expected=expected)
+        check('aborted-dispatch-rejected', False)
+    except RuntimeError:
+        check('aborted-dispatch-rejected', True)
+
+    stopping_state = make_state('run-stopping')
+    stopping_state['workers'][0]['stopStatus'] = 'requested'
+    stopping_controller = Controller(FakeAdapter(), d, 'run-stopping', stopping_state)
+    try:
+        stopping_controller.dispatch(
+            'a', 1, 'stopping', startup_report=good_report, expected=expected)
+        check('stopping-dispatch-rejected', False)
+    except RuntimeError:
+        check('stopping-dispatch-rejected', True)
+
+    pending_state = make_state('run-pending')
+    pending_state['workers'][0]['dispatchIntent'] = {
+        'dispatchId': 'old', 'message': 'old',
+        'at': '2026-11-12T10:00:00+08:00', 'result': 'pending',
+    }
+    pending_controller = Controller(FakeAdapter(), d, 'run-pending', pending_state)
+    try:
+        pending_controller.dispatch(
+            'a', 1, 'pending', startup_report=good_report, expected=expected)
+        check('pending-dispatch-rejected', False)
+    except RuntimeError:
+        check('pending-dispatch-rejected', True)
+
+    aborted_create_adapter = FakeAdapter()
+    aborted_create_controller = Controller(
+        aborted_create_adapter, d, 'run-aborted-create', aborted_state)
+    try:
+        aborted_create_controller.create_worker('prompt', 'p1')
+        check('aborted-create-rejected', False)
+    except RuntimeError:
+        check('aborted-create-rejected', True)
+    check('aborted-create-no-call', not aborted_create_adapter.calls)
+
+    old_attempt_state = make_state('run-old-attempt')
+    old_attempt_state['workers'][0]['state'] = 'cancelled'
+    old_attempt_state['workers'].append({
+        'role': 'a', 'attempt': 2, 'state': 'ready', 'threadId': 't-a2',
+        'branch': 'tw/a-2', 'baseSha': 'a' * 40,
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'deadline': '2026-11-12T10:05:00+08:00',
+        'lastObservation': '2026-11-12T10:00:00+08:00',
+        'errors': [],
+    })
+    old_attempt_controller = Controller(FakeAdapter(), d, 'run-old-attempt', old_attempt_state)
+    expected_a2 = dict(expected, branch='tw/a-2')
+    good_a2 = dict(good_report, attempt=2, branch='tw/a-2')
+    old_attempt_controller.dispatch(
+        'a', 2, 'a2', startup_report=good_a2, expected=expected_a2)
+    check('old-attempt-does-not-block',
+          read_state(run_state_path(d, 'run-old-attempt'))['workers'][1]['state'] == 'dispatched')
+
+    running_b_state = make_state('run-running-b')
+    running_b_state['workers'][0]['state'] = 'running'
+    running_b_state['workers'].append({
+        'role': 'b', 'attempt': 1, 'state': 'ready', 'threadId': 't-b',
+        'branch': 'tw/b-1', 'baseSha': 'a' * 40,
+        'createdAt': '2026-11-12T10:00:00+08:00',
+        'deadline': '2026-11-12T10:05:00+08:00',
+        'lastObservation': '2026-11-12T10:00:00+08:00',
+        'errors': [],
+    })
+    running_b_controller = Controller(FakeAdapter(), d, 'run-running-b', running_b_state)
+    expected_b2 = dict(expected, branch='tw/b-1')
+    good_b2 = dict(good_report, role='b', branch='tw/b-1')
+    running_b_controller.dispatch(
+        'b', 1, 'b', startup_report=good_b2, expected=expected_b2)
+    check('running-a-does-not-block-b',
+          read_state(run_state_path(d, 'run-running-b'))['workers'][1]['state'] == 'dispatched')
+
     save_fail_adapter = FakeAdapter()
     save_fail_controller = FailingSaveController(
-        save_fail_adapter, d, 'run-save-fail', make_state(), fail_on=1)
+        save_fail_adapter, d, 'run-save-fail', make_state('run-save-fail'), fail_on=1)
     try:
         save_fail_controller.dispatch(
             'a', 1, 'save before send', startup_report=good_report, expected=expected)
@@ -264,7 +386,7 @@ with tempfile.TemporaryDirectory() as d:
 
     post_adapter = FakeAdapter()
     post_controller = FailingSaveController(
-        post_adapter, d, 'run-post-save-fail', make_state(), fail_on=2)
+        post_adapter, d, 'run-post-save-fail', make_state('run-post-save-fail'), fail_on=2)
     try:
         post_controller.dispatch(
             'a', 1, 'save after send', startup_report=good_report, expected=expected)
@@ -298,7 +420,7 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError:
         check('replace-first-ok', False)
 
-    rework_state = make_state()
+    rework_state = make_state('run-rework')
     rework_state['workers'][0]['state'] = 'reported'
     rework_controller = Controller(FakeAdapter(), d, 'run-rework', rework_state)
     rework_controller.rework('a', 1, notes='fix review findings')
@@ -306,7 +428,7 @@ with tempfile.TemporaryDirectory() as d:
     check('rework-transition', rework_saved['workers'][0]['state'] == 'running')
     check('rework-count', rework_saved['workers'][0]['reworkCount'] == 1)
 
-    state2 = make_state()
+    state2 = make_state('run-2')
     state2['workers'][0]['attempt'] = 2
     state2['workers'][0]['stopStatus'] = 'confirmed'
     controller2 = Controller(FakeAdapter(), d, 'run-2', state2)
@@ -325,8 +447,8 @@ with tempfile.TemporaryDirectory() as d:
     check('plan-update-plan-available',
           controller.write_plan({'x': 1}, update_plan_available=True) == 'update_plan')
 
-    stale_a = Controller(FakeAdapter(), d, 'run-stale', make_state())
-    stale_b = Controller(FakeAdapter(), d, 'run-stale', make_state())
+    stale_a = Controller(FakeAdapter(), d, 'run-stale', make_state('run-stale'))
+    stale_b = Controller(FakeAdapter(), d, 'run-stale', make_state('run-stale'))
     stale_a.save()
     try:
         stale_b.save()
@@ -334,7 +456,45 @@ with tempfile.TemporaryDirectory() as d:
     except StaleStateError:
         check('stale-revision-rejected', True)
 
-    bad_state = make_state()
+    write_fail_controller = Controller(
+        FakeAdapter(), d, 'run-write-fail', make_state('run-write-fail'))
+    write_fail_controller.save()
+    revision_before = write_fail_controller.state['revision']
+    with patch('controller.write_state_atomic', side_effect=OSError('disk full')):
+        try:
+            write_fail_controller.save()
+            check('write-failure-raised', False)
+        except OSError:
+            check('write-failure-raised', True)
+    check('write-failure-no-revision-bump',
+          write_fail_controller.state['revision'] == revision_before)
+    write_fail_controller.save()
+    check('write-retry-succeeds',
+          read_state(run_state_path(d, 'run-write-fail'))['revision'] == revision_before + 1)
+
+    mismatch_controller = Controller(
+        FakeAdapter(), d, 'run-mismatch', make_state('wrong-run'))
+    try:
+        mismatch_controller.save()
+        check('run-id-mismatch-rejected', False)
+    except ValueError:
+        check('run-id-mismatch-rejected', True)
+
+    false_complete = make_state('run-false-complete')
+    false_complete['status'] = 'complete'
+    false_complete['finalReview'] = {'status': 'complete', 'notes': ''}
+    false_complete['cleanup'] = {
+        'status': 'complete', 'preservedReports': [],
+        'outstandingResources': [], 'notes': '',
+    }
+    false_complete['workers'][0]['state'] = 'running'
+    try:
+        Controller(FakeAdapter(), d, 'run-false-complete', false_complete).save()
+        check('false-complete-rejected', False)
+    except ValueError:
+        check('false-complete-rejected', True)
+
+    bad_state = make_state('run-bad')
     bad_state['status'] = 'not-a-status'
     bad_controller = Controller(FakeAdapter(), d, 'run-bad', bad_state)
     try:
@@ -348,7 +508,7 @@ with tempfile.TemporaryDirectory() as d:
     check('lock-released-after-save-failure', True)
 
     try:
-        Controller(object(), d, 'run-2', make_state())
+        Controller(object(), d, 'run-2', make_state('run-2'))
         check('non-adapter-rejected', False)
     except TypeError:
         check('non-adapter-rejected', True)

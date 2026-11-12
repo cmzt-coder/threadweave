@@ -7,8 +7,12 @@
 
 def classify_worktree_cleanup(observed, report_archived):
     """返回 worktree 清理动作；缺失证据、非本 run、primary 一律保护。"""
+    if observed.get('worktree_exists') is None:
+        return 'protect_unknown'
     if not observed.get('worktree_exists'):
         return 'already_removed'
+    if observed.get('is_shared'):
+        return 'protect_shared'
     if observed.get('is_primary') or not observed.get('owned_by_run'):
         return 'protect_not_owned'
     if observed.get('status_porcelain') is None or observed.get('unmerged_commits') is None:
@@ -30,8 +34,14 @@ def classify_worktree_cleanup(observed, report_archived):
 
 def classify_branch_cleanup(observed):
     """返回分支清理动作；未合并分支保留。"""
+    if observed.get('branch_exists') is None:
+        return 'protect_unknown'
     if not observed.get('branch_exists'):
         return 'already_removed'
+    if not observed.get('owned_by_run'):
+        return 'protect_not_owned'
+    if observed.get('checked_out'):
+        return 'protect_checked_out'
     if observed.get('merged_into_integration'):
         return 'delete'
     return 'protect_unmerged'

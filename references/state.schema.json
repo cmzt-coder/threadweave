@@ -318,7 +318,8 @@
                   "pending",
                   "sent",
                   "unknown",
-                  "acknowledged"
+                  "acknowledged",
+                  "not_sent"
                 ]
               }
             }
@@ -396,6 +397,22 @@
           },
           "reworkNotes": {
             "type": "string"
+          },
+          "activityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stopActivityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastProgressAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "statusRequestedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

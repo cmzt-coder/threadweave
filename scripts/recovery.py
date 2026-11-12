@@ -44,7 +44,7 @@ def classify_worker_recovery(worker, observed, replacement_limit=1):
         if not observed.get('base_is_ancestor', False):
             return 'block'
         report_sha = observed.get('report_sha')
-        if report_sha and report_sha != head:
+        if not report_sha or report_sha != head:
             return 'block'
     else:
         # 初始化阶段：HEAD 必须精确等于 base

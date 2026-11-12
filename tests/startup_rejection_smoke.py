@@ -76,6 +76,12 @@ with tempfile.TemporaryDirectory(prefix='threadweave-startup-') as d:
     ok, reasons = validate_startup(report, expected_a)
     check('valid-report-accepted', ok and not reasons)
 
+    wrong_root_expected = dict(expected_a)
+    wrong_root_expected['worker_root'] = str(root / 'other')
+    ok, reasons = validate_startup(report, wrong_root_expected)
+    check('wrong-worker-root-rejected',
+          not ok and 'worktree_root_mismatch' in reasons)
+
     bad = dict(report, cwd=str(root))
     ok, reasons = validate_startup(bad, expected_a)
     check('wrong-cwd-rejected', not ok and 'cwd_outside_worktree_root' in reasons)

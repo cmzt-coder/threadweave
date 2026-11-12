@@ -49,13 +49,33 @@ check('unverified-stop-protected',
                             'no_active_turn': True}), True) == 'protect_unverified')
 check('clean-worktree-removable',
       classify_worktree_cleanup(clean, True) == 'remove')
+check('shared-worktree-protected',
+      classify_worktree_cleanup(dict(clean, is_shared=True), True) == 'protect_shared')
+check('unknown-worktree-protected',
+      classify_worktree_cleanup({'worktree_exists': None}, True) == 'protect_unknown')
+check('foreign-branch-protected',
+      classify_branch_cleanup({
+          'branch_exists': True, 'merged_into_integration': True,
+          'owned_by_run': False, 'checked_out': False,
+      }) == 'protect_not_owned')
+check('checked-out-branch-protected',
+      classify_branch_cleanup({
+          'branch_exists': True, 'merged_into_integration': True,
+          'owned_by_run': True, 'checked_out': True,
+      }) == 'protect_checked_out')
 
 check('missing-branch-idempotent',
       classify_branch_cleanup({'branch_exists': False}) == 'already_removed')
 check('unmerged-branch-protected',
-      classify_branch_cleanup({'branch_exists': True, 'merged_into_integration': False}) == 'protect_unmerged')
+      classify_branch_cleanup({
+          'branch_exists': True, 'merged_into_integration': False,
+          'owned_by_run': True, 'checked_out': False,
+      }) == 'protect_unmerged')
 check('merged-branch-deletable',
-      classify_branch_cleanup({'branch_exists': True, 'merged_into_integration': True}) == 'delete')
+      classify_branch_cleanup({
+          'branch_exists': True, 'merged_into_integration': True,
+          'owned_by_run': True, 'checked_out': False,
+      }) == 'delete')
 
 check('unverified-report-protected',
       classify_report_cleanup({'archived_and_verified': False}) == 'protect_unverified')
@@ -77,7 +97,10 @@ observations = {
     'a#1': {
         'worktree': clean,
         'report_archived': True,
-        'branch': {'branch_exists': True, 'merged_into_integration': True},
+        'branch': {
+            'branch_exists': True, 'merged_into_integration': True,
+            'owned_by_run': True, 'checked_out': False,
+        },
         'stop': {'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True},
     }
 }

@@ -2,6 +2,8 @@
 import json
 import sys
 import tempfile
+import threading
+from unittest.mock import patch
 from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
@@ -72,6 +74,62 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-') as d:
     manifest = json.loads((run_dir / 'archive-manifest.json').read_text(encoding='utf-8'))
     names = [e['name'] for e in manifest if e['role'] == 'a']
     check('archive-idempotent', len(names) == len(set(names)))
+
+    concurrent_dir = run_dir / 'concurrent'
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def archive_one(name):
+        try:
+            barrier.wait()
+            archive_artifacts(concurrent_dir, 'a', {name: worker / name})
+        except Exception as exc:
+            errors.append(exc)
+
+    for name in ('report-a.md', 'report-b.md'):
+        (worker / name).write_text(name, encoding='utf-8')
+    threads = [
+        threading.Thread(target=archive_one, args=(name,))
+        for name in ('report-a.md', 'report-b.md')
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    check('concurrent-archive-no-errors', not errors)
+    concurrent_manifest = json.loads(
+        (concurrent_dir / 'archive-manifest.json').read_text(encoding='utf-8'))
+    check('concurrent-archive-both-entries', len(concurrent_manifest) == 2)
+
+    retry_dir = run_dir / 'retry'
+    retry_source = worker / 'retry.md'
+    retry_source.write_text('retry', encoding='utf-8')
+    with patch('archival.shutil.copy2', side_effect=OSError('copy failed')):
+        try:
+            archive_artifacts(retry_dir, 'a', {'retry.md': retry_source})
+            check('copy-failure-raised', False)
+        except OSError:
+            check('copy-failure-raised', True)
+    check('copy-failure-no-temp',
+          not list((retry_dir / 'reports' / 'a' / '1' / '1').glob('*.tmp')))
+    archive_artifacts(retry_dir, 'a', {'retry.md': retry_source})
+    check('copy-retry-succeeds',
+          (retry_dir / 'reports' / 'a' / '1' / '1' / 'retry.md').is_file())
+
+    manifest_fail_dir = run_dir / 'manifest-fail'
+    manifest_source = worker / 'manifest.md'
+    manifest_source.write_text('m', encoding='utf-8')
+    with patch('archival.write_state_atomic', side_effect=OSError('manifest failed')):
+        try:
+            archive_artifacts(manifest_fail_dir, 'a', {'manifest.md': manifest_source})
+            check('manifest-failure-raised', False)
+        except OSError:
+            check('manifest-failure-raised', True)
+    check('manifest-failure-no-manifest',
+          not (manifest_fail_dir / 'archive-manifest.json').exists())
+    archive_artifacts(manifest_fail_dir, 'a', {'manifest.md': manifest_source})
+    check('manifest-retry-succeeds',
+          (manifest_fail_dir / 'archive-manifest.json').is_file())
 
     attempt2_source = worker / 'report-attempt2.md'
     attempt2_source.write_text('# Attempt 2' + chr(10), encoding='utf-8')

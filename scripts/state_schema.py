@@ -81,6 +81,14 @@ def validate_invariants(state):
             errors.append('complete run requires complete finalReview')
         if state.get('cleanup', {}).get('status') != 'complete':
             errors.append('complete run requires complete cleanup')
+        active = [
+            w for w in workers
+            if w.get('state') not in ('integrated', 'archived')
+        ]
+        if active:
+            errors.append('complete run requires all workers integrated/archived')
+        if state.get('cleanup', {}).get('outstandingResources'):
+            errors.append('complete run requires no outstanding resources')
     if errors:
         raise ValueError('state invariant violation: ' + '; '.join(errors))
 

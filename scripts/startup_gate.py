@@ -28,6 +28,9 @@ def validate_startup(report, expected):
         reasons.append('branch_mismatch')
     if report['head'].strip() != expected['base'].strip():
         reasons.append('head_not_base')
+    expected_root = expected.get('worker_root')
+    if expected_root is not None and root != canonical(expected_root):
+        reasons.append('worktree_root_mismatch')
     if report['status_porcelain'].strip():
         reasons.append('dirty_worktree')
     for other in expected['other_roots']:

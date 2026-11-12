@@ -31,6 +31,12 @@ check('stall-request-status',
 check('stall-stalled',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:09:00+08:00',
                   status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'stalled')
+check('stall-new-progress-overrides-request',
+      check_stall('2026-11-12T10:09:00+08:00', '2026-11-12T10:10:00+08:00',
+                  status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'ok')
+check('initialization-terminal-not-applicable',
+      check_initialization('2026-11-12T10:00:00+08:00', '2026-11-12T11:00:00+08:00',
+                           worker_state='archived')['status'] == 'not_applicable')
 check('stall-grace',
       check_stall('2026-11-12T10:00:00+08:00', '2026-11-12T10:08:00+08:00',
                   status_requested_at='2026-11-12T10:07:00+08:00')['status'] == 'grace')

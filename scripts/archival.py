@@ -5,11 +5,12 @@
 """
 import hashlib
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from state_store import write_state_atomic
+from state_store import StateLock, write_state_atomic
 
 
 class ArchiveConflict(Exception):
@@ -43,9 +44,15 @@ def _safe_segment(value, name):
 
 
 def archive_artifacts(run_dir, role, files, attempt=1, revision=1):
-    """归档一组 artifact；返回本次写入的 manifest 条目。"""
+    """归档一组 artifact；返回本次写入的 manifest 条目。
+
+    manifest 更新与文件发布在同一 run 锁内；文件先写临时目标并校验，
+    再原子替换，避免半成品触发 ArchiveConflict。
+    """
     run_dir = Path(run_dir)
     _safe_segment(role, 'role')
+    if (run_dir / 'reports').is_symlink():
+        raise ValueError('reports directory must not be a symlink')
     reports_root = (run_dir / 'reports').resolve()
     target_dir = (run_dir / 'reports' / role / str(attempt) / str(revision)).resolve()
     if target_dir != reports_root and reports_root not in target_dir.parents:
@@ -54,38 +61,55 @@ def archive_artifacts(run_dir, role, files, attempt=1, revision=1):
         raise ValueError('role must not be a symlink')
     target_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = run_dir / 'archive-manifest.json'
-    entries = []
-    for name, source in files.items():
-        _safe_segment(name, 'artifact name')
-        source = Path(source)
-        if not source.is_file():
-            raise FileNotFoundError(source)
-        target = target_dir / name
-        source_sha = _sha256(source)
-        if target.exists():
-            if _sha256(target) != source_sha:
-                raise ArchiveConflict(f'{target} exists with different content')
-        else:
-            shutil.copy2(source, target)
-        entries.append({
-            'role': role,
-            'attempt': attempt,
-            'revision': revision,
-            'name': name,
-            'source': str(source),
-            'target': str(target),
-            'sha256': source_sha,
-            'size': source.stat().st_size,
-            'archivedAt': _now_iso(),
-        })
-    merged = {
-        (e['role'], e.get('attempt', 1), e.get('revision', 1), e['name']): e
-        for e in _load_manifest(manifest_path)
-    }
-    for entry in entries:
-        merged[(entry['role'], entry['attempt'], entry['revision'], entry['name'])] = entry
-    write_state_atomic(manifest_path, sorted(merged.values(), key=lambda e: (e['role'], e['name'])))
-    return entries
+    lock = StateLock(run_dir / 'archive.lock')
+    lock.acquire(blocking=True)
+    try:
+        entries = []
+        for name, source in files.items():
+            _safe_segment(name, 'artifact name')
+            source = Path(source)
+            if not source.is_file():
+                raise FileNotFoundError(source)
+            target = target_dir / name
+            source_sha = _sha256(source)
+            if target.exists():
+                if _sha256(target) != source_sha:
+                    raise ArchiveConflict(f'{target} exists with different content')
+            else:
+                temp = target.with_suffix(target.suffix + '.tmp')
+                try:
+                    shutil.copy2(source, temp)
+                    if _sha256(temp) != source_sha:
+                        raise RuntimeError('copied file hash mismatch')
+                    os.replace(temp, target)
+                finally:
+                    if temp.exists():
+                        temp.unlink()
+            entries.append({
+                'role': role,
+                'attempt': attempt,
+                'revision': revision,
+                'name': name,
+                'source': str(source),
+                'target': str(target),
+                'sha256': source_sha,
+                'size': source.stat().st_size,
+                'archivedAt': _now_iso(),
+            })
+        merged = {
+            (e['role'], e.get('attempt', 1), e.get('revision', 1), e['name']): e
+            for e in _load_manifest(manifest_path)
+        }
+        for entry in entries:
+            merged[(entry['role'], entry['attempt'], entry['revision'], entry['name'])] = entry
+        write_state_atomic(
+            manifest_path,
+            sorted(merged.values(), key=lambda e: (
+                e['role'], e.get('attempt', 1), e.get('revision', 1), e['name'])),
+        )
+        return entries
+    finally:
+        lock.release()
 
 
 def verify_archive(run_dir, expected):

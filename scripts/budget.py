@@ -12,8 +12,10 @@ def _as_datetime(value):
     return value if isinstance(value, datetime) else datetime.fromisoformat(value)
 
 
-def check_initialization(created_at, now, limit_seconds=300):
-    """检查 worker 初始化是否超过默认五分钟。"""
+def check_initialization(created_at, now, limit_seconds=300, worker_state=None):
+    """检查 worker 初始化是否超过默认五分钟；终态不适用。"""
+    if worker_state in TERMINAL_STATES:
+        return {'status': 'not_applicable', 'elapsedSeconds': 0}
     elapsed = (_as_datetime(now) - _as_datetime(created_at)).total_seconds()
     status = 'deadline_exceeded' if elapsed > limit_seconds else 'ok'
     return {'status': status, 'elapsedSeconds': elapsed}
@@ -25,9 +27,12 @@ def check_stall(last_progress_at, now, inactivity_seconds=360, grace_seconds=120
     if worker_state in TERMINAL_STATES:
         return {'status': 'not_applicable', 'elapsedSeconds': 0}
     if status_requested_at is not None:
-        grace_elapsed = (_as_datetime(now) - _as_datetime(status_requested_at)).total_seconds()
-        status = 'stalled' if grace_elapsed >= grace_seconds else 'grace'
-        return {'status': status, 'graceElapsedSeconds': grace_elapsed}
+        if _as_datetime(last_progress_at) > _as_datetime(status_requested_at):
+            status_requested_at = None
+        else:
+            grace_elapsed = (_as_datetime(now) - _as_datetime(status_requested_at)).total_seconds()
+            status = 'stalled' if grace_elapsed >= grace_seconds else 'grace'
+            return {'status': status, 'graceElapsedSeconds': grace_elapsed}
     elapsed = (_as_datetime(now) - _as_datetime(last_progress_at)).total_seconds()
     if elapsed >= inactivity_seconds:
         return {'status': 'request_status', 'elapsedSeconds': elapsed}
@@ -67,7 +72,7 @@ def summarize_budget(state, observations, now,
         status_requested = worker.get('statusRequestedAt')
         summary[key] = {
             'initialization': (
-                check_initialization(created_at, now, initialization_limit)
+                check_initialization(created_at, now, initialization_limit, worker.get('state'))
                 if created_at else {'status': 'unknown'}),
             'stall': (
                 check_stall(last_progress, now, inactivity, grace,
