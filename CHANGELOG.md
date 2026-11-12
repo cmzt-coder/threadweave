@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `scripts/startup_gate.py`：可复用启动门禁校验，控制器与测试共用。
+- 控制器增强：`dispatch` 派发前校验启动报告；`replace_worker` 强制每角色一次替换上限；
+  `write_plan` 在 `update_plan` 不可用时写 state 文件。
+- `tests/controller_smoke.py` 增至 16 项断言；全量测试 188 项。
+
 ## 0.1.0 (2026-11-12, unreleased)
 
 首个本地可用版本，尚未发布到远端。

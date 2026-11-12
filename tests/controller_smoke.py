@@ -68,6 +68,28 @@ with tempfile.TemporaryDirectory() as d:
     except InvalidTransition:
         check('invalid-run-transition-rejected', True)
 
+    expected = {
+        'common_dir': str(Path(d) / 'fake-common'),
+        'branch': 'tw/a-1',
+        'base': 'a' * 40,
+        'other_roots': [Path(d) / 'leader'],
+    }
+    bad_report = {
+        'cwd': str(Path(d) / 'worker'),
+        'worktree_root': str(Path(d) / 'worker'),
+        'git_common_dir': str(Path(d) / 'fake-common'),
+        'branch': 'tw/a-1',
+        'head': 'b' * 40,
+        'status_porcelain': '',
+    }
+    try:
+        controller.dispatch('a', 1, 'bad dispatch', startup_report=bad_report, expected=expected)
+        check('bad-startup-rejected', False)
+    except RuntimeError:
+        check('bad-startup-rejected', True)
+    check('bad-startup-no-message',
+          ('send_message', 't-a', 'bad dispatch') not in adapter.calls)
+
     thread_id = controller.dispatch('a', 1, 'do work')
     check('dispatch-returns-thread-id', thread_id == 't-a')
     check('dispatch-calls-adapter', ('send_message', 't-a', 'do work') in adapter.calls)
@@ -79,6 +101,30 @@ with tempfile.TemporaryDirectory() as d:
         check('duplicate-dispatch-rejected', False)
     except RuntimeError:
         check('duplicate-dispatch-rejected', True)
+
+    try:
+        controller.replace_worker('a', 1, replacement_limit=1)
+        check('replace-first-ok', True)
+    except RuntimeError:
+        check('replace-first-ok', False)
+
+    state2 = make_state()
+    state2['workers'][0]['attempt'] = 2
+    controller2 = Controller(FakeAdapter(), d, 'run-2', state2)
+    try:
+        controller2.replace_worker('a', 2, replacement_limit=1)
+        check('replace-over-limit-rejected', False)
+    except RuntimeError:
+        check('replace-over-limit-rejected', True)
+
+    plan_result = controller.write_plan(
+        {'phases': ['execute', 'review', 'commit']}, update_plan_available=False)
+    check('plan-downgrade-state-file', plan_result == 'state-file')
+    saved = read_state(run_state_path(d, 'run-1'))
+    check('plan-written-to-state',
+          saved['plan']['phases'] == ['execute', 'review', 'commit'])
+    check('plan-update-plan-available',
+          controller.write_plan({'x': 1}, update_plan_available=True) == 'update_plan')
 
     try:
         Controller(object(), d, 'run-2', make_state())

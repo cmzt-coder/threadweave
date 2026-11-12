@@ -5,7 +5,9 @@
 """
 from datetime import datetime, timezone
 
+from budget import check_retry
 from host_adapter import HostAdapter
+from startup_gate import validate_startup
 from state_store import run_state_path, validate_transition, write_state_atomic
 
 
@@ -43,14 +45,40 @@ class Controller:
         worker['state'] = new_status
         self.save()
 
-    def dispatch(self, role, attempt, message):
-        """仅在 worker ready 且已有真实 threadId 时派发，避免重复派发。"""
+    def dispatch(self, role, attempt, message, startup_report=None, expected=None):
+        """仅在 worker ready、启动报告通过且已有真实 threadId 时派发。"""
         worker = self._worker(role, attempt)
         if worker['state'] != 'ready':
             raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected ready')
         if not worker.get('threadId'):
             raise RuntimeError(f'worker {role}#{attempt} has no real threadId')
+        if startup_report is not None:
+            if expected is None:
+                raise ValueError('expected startup metadata is required')
+            ok, reasons = validate_startup(startup_report, expected)
+            if not ok:
+                raise RuntimeError(f'startup validation failed: {reasons}')
         self.adapter.send_message(worker['threadId'], message)
         worker['dispatchAt'] = _now_iso()
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']
+
+    def replace_worker(self, role, attempt, replacement_limit=1):
+        """检查替换上限；超限抛错，未超限只返回替换计划，不创建线程。"""
+        worker = self._worker(role, attempt)
+        result = check_retry(worker['attempt'], replacement_limit)
+        if result['status'] == 'blocked':
+            raise RuntimeError(f'replacement limit reached for {role}#{attempt}')
+        return {
+            'role': role,
+            'nextAttempt': worker['attempt'] + 1,
+            'limit': replacement_limit,
+        }
+
+    def write_plan(self, plan, update_plan_available=True):
+        """可选工具降级：有 update_plan 时返回工具名，否则写入 state 文件。"""
+        if update_plan_available:
+            return 'update_plan'
+        self.state['plan'] = plan
+        self.save()
+        return 'state-file'
