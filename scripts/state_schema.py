@@ -77,6 +77,8 @@ def validate_invariants(state):
     if len(identities) != len(set(identities)):
         errors.append('duplicate worker role/attempt')
     if state.get('status') == 'complete':
+        if state.get('integrationBlocked'):
+            errors.append('complete run cannot have unresolved integration failure')
         if state.get('finalReview', {}).get('status') != 'complete':
             errors.append('complete run requires complete finalReview')
         if state.get('cleanup', {}).get('status') != 'complete':

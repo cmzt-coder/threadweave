@@ -105,6 +105,10 @@
         "repoPath": {
           "type": "string",
           "minLength": 1
+        },
+        "currentSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
         }
       }
     },
@@ -144,6 +148,10 @@
           "minimum": 1
         },
         "replacementPerRole": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxReworkPerWorker": {
           "type": "integer",
           "minimum": 0
         }
@@ -469,8 +477,71 @@
               "acceptedAt": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "runId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "commitSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "filesChanged": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "testsRun": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "contractChanges": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "knownRisks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "selfReportedVerification": {
+                "type": "array"
               }
             }
+          },
+          "ownedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "scopeExceptions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "acceptance": {
+            "type": "object"
+          },
+          "verificationPlan": {
+            "type": "object"
           }
         }
       }
@@ -563,6 +634,21 @@
           "verification": {
             "type": "string",
             "minLength": 1
+          },
+          "beforeSha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "afterSha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acceptance": {
+            "type": "object"
           }
         }
       }
@@ -716,6 +802,43 @@
           "type": "string",
           "format": "date-time"
         }
+      }
+    },
+    "integrationBlocked": {
+      "type": "object",
+      "required": [
+        "role",
+        "attempt",
+        "head",
+        "at",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "integrationRecovery": {
+      "type": "array",
+      "items": {
+        "type": "object"
       }
     }
   }

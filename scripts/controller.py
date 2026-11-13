@@ -4,10 +4,15 @@
 真实运行前必须提供具体宿主适配器，并用真实线程验证。
 """
 from datetime import datetime, timezone
+import copy
+import json
+from pathlib import Path
+import subprocess
 
 from budget import check_retry
 from host_adapter import HostAdapter
 from startup_gate import validate_startup
+from run_log import log_event
 from state_schema import validate_state
 from state_store import StateLock, read_state, run_state_path, validate_transition, write_state_atomic
 
@@ -166,6 +171,7 @@ class Controller:
         if blocked:
             raise RuntimeError('team gate not ready: ' + ', '.join(blocked))
 
+        self._scope_reservations()
         dispatch_id = f"{role}#{attempt}@{_now_iso()}"
         worker['dispatchIntent'] = {
             'dispatchId': dispatch_id,
@@ -198,65 +204,221 @@ class Controller:
         self.transition_worker(role, attempt, 'dispatched')
         return worker['threadId']
 
-    def accept_report(self, role, attempt, report):
-        """接收报告并绑定 thread/branch/head/reportSha/taskRevision。"""
+    def _review_worker(self, role, attempt):
+        """只审查当前有效任务；停止请求与终端 run 不允许继续推进。"""
         worker = self._worker(role, attempt)
+        if self._active_workers().get(role) is not worker:
+            raise RuntimeError('not the active attempt')
+        if self.state.get('status') in ('aborted', 'failed', 'complete', 'cleanup_pending'):
+            raise RuntimeError('run cannot accept or integrate work')
+        if worker.get('stopStatus') == 'requested':
+            raise RuntimeError('worker stop is not yet confirmed')
+        return worker
+
+    @staticmethod
+    def _git(root, *args):
+        result = subprocess.run(['git', '-C', str(root), *args],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError('git observation failed: ' + ' '.join(args[:2]))
+        return result.stdout.rstrip('\n')
+
+    def _observe_worker(self, worker):
+        """独立读取 Git，报告自报不能代替身份、SHA 与文件清单观察。"""
+        root = Path(worker.get('worktree') or '').resolve()
+        if not worker.get('worktree') or not root.is_dir():
+            raise RuntimeError('registered worker worktree is unavailable')
+        if Path(self._git(root, 'rev-parse', '--show-toplevel')).resolve() != root:
+            raise RuntimeError('worker root identity mismatch')
+        common = Path(self._git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve()
+        if common != Path(self.state['project']['commonDirectory']).resolve():
+            raise RuntimeError('worker git common directory mismatch')
+        branch = self._git(root, 'symbolic-ref', '--short', 'HEAD')
+        head = self._git(root, 'rev-parse', 'HEAD')
+        if branch != worker['branch']:
+            raise RuntimeError('worker branch mismatch')
+        if self._git(root, 'rev-parse', '--verify', 'refs/heads/' + branch) != head:
+            raise RuntimeError('worker branch tip mismatch')
+        if worker.get('branchTip') and worker['branchTip'] != head:
+            raise RuntimeError('worker head changed from registered branch tip')
+        if self._git(root, 'status', '--porcelain'):
+            raise RuntimeError('worker worktree is dirty')
+        self._git(root, 'merge-base', '--is-ancestor', worker['baseSha'], head)
+        # 禁用 rename 折叠，两个端点都得到检查；NUL 分隔保留特殊文件名。
+        paths = self._git(root, 'diff', '--name-only', '--no-renames', '-z',
+                          worker['baseSha'], head).split('\0')
+        return {'head': head, 'branch': branch, 'baseIsAncestor': True,
+                'filesChanged': sorted(x for x in paths if x)}
+
+    def _scope_reservations(self):
+        from scope import check_reservations
+        workers = list(self._active_workers().values())
+        if not any('ownedPaths' in w for w in workers):
+            return
+        if any('ownedPaths' not in w for w in workers):
+            raise RuntimeError('all active workers must declare ownedPaths')
+        resources = []
+        config_path = Path(self.repo_root) / 'threadweave.config.json'
+        if config_path.is_file():
+            if config_path.resolve().parent != Path(self.repo_root).resolve():
+                raise RuntimeError('project configuration escapes repository')
+            config = json.loads(config_path.read_text(encoding='utf-8'))
+            resources = config.get('serializedResources', [])
+        errors = check_reservations(workers, self.repo_root, resources)
+        if errors:
+            raise RuntimeError('scope reservation conflict: ' + '; '.join(errors))
+
+    @staticmethod
+    def _scope_changes(worker, observed):
+        if 'ownedPaths' not in worker:
+            return
+        from scope import check_changes
+        errors = check_changes(observed['filesChanged'], worker['ownedPaths'],
+                               worker.get('scopeExceptions', []))
+        if errors:
+            raise RuntimeError('scope_drift: ' + '; '.join(errors))
+
+    def accept_report(self, role, attempt, report):
+        """接收完整 JSON 报告；旧格式需重报，不能绕过独立 Git 核验。"""
+        from report import validate_report
+        worker = self._review_worker(role, attempt)
         if worker['state'] not in ('running', 'blocked'):
-            raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected running/blocked')
-        required = ('threadId', 'branch', 'head', 'reportSha', 'taskRevision', 'baseIsAncestor')
-        for field in required:
-            if field not in report:
-                raise ValueError(f'report missing {field}')
-        if report['threadId'] != worker.get('threadId'):
-            raise RuntimeError('report threadId mismatch')
-        if report['branch'] != worker.get('branch'):
-            raise RuntimeError('report branch mismatch')
-        if report['taskRevision'] != worker.get('activityRevision', 0):
-            raise RuntimeError('report belongs to an older task revision')
-        if worker.get('branchTip') and report['head'] != worker['branchTip']:
-            raise RuntimeError('report head does not match branch tip')
-        if not report['baseIsAncestor']:
-            raise RuntimeError('report base is not an ancestor of head')
-        worker['report'] = {
-            'threadId': report['threadId'],
-            'branch': report['branch'],
-            'head': report['head'],
-            'reportSha': report['reportSha'],
-            'taskRevision': report['taskRevision'],
-            'baseIsAncestor': report['baseIsAncestor'],
-            'acceptedAt': _now_iso(),
-        }
+            raise RuntimeError('report requires running/blocked worker')
+        expected = {'runId': self.run_id, 'role': role, 'attempt': attempt,
+                    'threadId': worker.get('threadId'), 'branch': worker['branch'],
+                    'taskRevision': worker.get('activityRevision', 0)}
+        observed = self._observe_worker(worker)
+        validated = validate_report(report, expected, observed)
+        self._scope_changes(worker, observed)
+        worker['report'] = dict(validated, acceptedAt=_now_iso())
+        worker.pop('acceptance', None)
         worker['state'] = 'reported'
         self.save()
         return worker['report']
 
-    def integrate(self, role, attempt, merge_commit, verification):
-        """记录一次报告审查/集成结果；失败时阻止后续集成。"""
-        worker = self._worker(role, attempt)
-        if worker['state'] != 'reported':
-            raise RuntimeError(f'worker {role}#{attempt} is {worker["state"]}, expected reported')
-        report = worker.get('report')
-        if not report:
-            raise RuntimeError('report not accepted')
-        if not verification:
-            raise RuntimeError('verification required')
-        if verification.startswith('FAIL'):
-            self.state.setdefault('integrationLog', []).append({
-                'branch': worker.get('branch'),
-                'mergeCommit': None,
-                'result': 'failed',
-                'verification': verification,
-            })
-            self.save()
-            raise RuntimeError('integration verification failed')
+    def _require_stopped(self, worker):
+        if (worker.get('stopStatus') != 'confirmed' or
+                worker.get('stopActivityRevision') != worker.get('activityRevision', 0)):
+            raise RuntimeError('fresh confirmed stop evidence required')
+
+    def _context(self, worker, stage, head):
+        return {'runId': self.run_id, 'role': worker['role'],
+                'attempt': worker['attempt'],
+                'taskRevision': worker.get('activityRevision', 0),
+                'stage': stage, 'head': head}
+
+    def _block_integration(self, worker, result, before=None, head=None):
+        self.state['integrationBlocked'] = {
+            'role': worker['role'], 'attempt': worker['attempt'],
+            'head': head or result['context']['head'], 'at': _now_iso(),
+            'reason': 'independent acceptance failed',
+        }
         self.state.setdefault('integrationLog', []).append({
-            'branch': worker.get('branch'),
-            'mergeCommit': merge_commit,
-            'result': 'merged',
-            'verification': verification,
+            'branch': worker['branch'], 'mergeCommit': None,
+            'result': 'failed', 'verification': 'independent acceptance failed',
+            'beforeSha': before, 'afterSha': head,
+            'acceptance': result,
         })
+        self.save()
+
+    def verify_worker(self, role, attempt, plan):
+        from verify import execute_plan
+        worker = self._review_worker(role, attempt)
+        if worker['state'] != 'reported' or not worker.get('report'):
+            raise RuntimeError('accepted report required')
+        self._require_stopped(worker)
+        observed = self._observe_worker(worker)
+        report = worker['report']
+        if (report['head'] != observed['head'] or
+                report['taskRevision'] != worker.get('activityRevision', 0)):
+            raise RuntimeError('report evidence is stale')
+        self._scope_changes(worker, observed)
+        result = execute_plan(plan, worker['worktree'], self._context(worker, 'worker', observed['head']))
+        worker['verificationPlan'] = copy.deepcopy(plan)
+        worker['acceptance'] = {'result': result, 'reportSha': report['reportSha'],
+                                'worktree': str(Path(worker['worktree']).resolve())}
+        if result['status'] != 'passed':
+            self._block_integration(worker, result)
+            raise RuntimeError('worker acceptance failed')
+        self.save()
+        return result
+
+    def _integration_observation(self):
+        root = Path(self.state['integration']['repoPath']).resolve()
+        if root != Path(self.repo_root).resolve():
+            raise RuntimeError('integration checkout identity mismatch')
+        if Path(self._git(root, 'rev-parse', '--show-toplevel')).resolve() != root:
+            raise RuntimeError('integration root mismatch')
+        if self._git(root, 'symbolic-ref', '--short', 'HEAD') != self.state['integration']['branch']:
+            raise RuntimeError('integration branch mismatch')
+        if Path(self._git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve() != Path(self.state['project']['commonDirectory']).resolve():
+            raise RuntimeError('integration common directory mismatch')
+        if self._git(root, 'status', '--porcelain'):
+            raise RuntimeError('integration worktree is dirty')
+        return root, self._git(root, 'rev-parse', 'HEAD')
+
+    def integrate(self, role, attempt, merge_commit, verification=None, plan=None):
+        """核验外部串行 merge 的实际结果，并独立验收；不执行 Git merge。"""
+        from verify import execute_plan, plan_hash
+        worker = self._review_worker(role, attempt)
+        if self.state.get('integrationBlocked'):
+            raise RuntimeError('integration blocked; explicit recovery required')
+        if verification is not None:
+            raise RuntimeError('legacy verification strings are not acceptance evidence')
+        if not plan:
+            raise RuntimeError('integration verification plan required')
+        if worker['state'] != 'reported' or not worker.get('report'):
+            raise RuntimeError('accepted report required')
+        self._require_stopped(worker)
+        observed = self._observe_worker(worker)
+        self._scope_changes(worker, observed)
+        acceptance = worker.get('acceptance', {})
+        result = acceptance.get('result', {})
+        report = worker['report']
+        if (result.get('status') != 'passed' or
+                result.get('context') != self._context(worker, 'worker', observed['head']) or
+                result.get('planHash') != plan_hash(worker.get('verificationPlan', {})) or
+                acceptance.get('reportSha') != report['reportSha'] or
+                acceptance.get('worktree') != str(Path(worker['worktree']).resolve()) or
+                report['head'] != observed['head'] or
+                report['taskRevision'] != worker.get('activityRevision', 0)):
+            raise RuntimeError('worker acceptance is missing or stale')
+        root, head = self._integration_observation()
+        if merge_commit != head:
+            raise RuntimeError('merge commit is not actual integration HEAD')
+        self._git(root, 'merge-base', '--is-ancestor', observed['head'], head)
+        before = self.state['integration'].get('currentSha', self.state['integration']['baseSha'])
+        self._git(root, 'merge-base', '--is-ancestor', before, head)
+        integrated = execute_plan(plan, root, self._context(worker, 'integration', head))
+        if integrated['status'] != 'passed':
+            self._block_integration(worker, integrated, before, head)
+            raise RuntimeError('integration acceptance failed')
+        self.state.setdefault('integrationLog', []).append({
+            'branch': worker['branch'], 'mergeCommit': head, 'result': 'merged',
+            'verification': 'independent acceptance passed',
+            'beforeSha': before, 'afterSha': head, 'acceptance': integrated,
+        })
+        self.state['integration']['currentSha'] = head
         self.transition_worker(role, attempt, 'integrated')
         return self.state['integrationLog'][-1]
+
+    def recover_integration(self, plan):
+        """leader 显式重验当前集成 HEAD，成功后解除阻断，保留失败记录。"""
+        from verify import execute_plan
+        blocked = self.state.get('integrationBlocked')
+        if not blocked:
+            raise RuntimeError('integration is not blocked')
+        worker = self._review_worker(blocked['role'], blocked['attempt'])
+        self._require_stopped(worker)
+        root, head = self._integration_observation()
+        result = execute_plan(plan, root, self._context(worker, 'integration', head))
+        self.state.setdefault('integrationRecovery', []).append(result)
+        if result['status'] != 'passed':
+            self.save()
+            raise RuntimeError('integration recovery verification failed')
+        self.state.pop('integrationBlocked')
+        self.save()
+        return result
 
     def request_stop(self, role, attempt):
         """记录停止请求；不代表线程已停止。"""
@@ -278,14 +440,31 @@ class Controller:
         return worker['stopStatus']
 
     def rework(self, role, attempt, notes=''):
-        """把 reported worker 退回 running，记录返工修订。"""
-        worker = self._worker(role, attempt)
-        worker['reworkCount'] = worker.get('reworkCount', 0) + 1
-        worker['reworkNotes'] = notes
-        worker['activityRevision'] = worker.get('activityRevision', 0) + 1
-        worker.pop('stopStatus', None)
-        worker.pop('stopActivityRevision', None)
-        self.transition_worker(role, attempt, 'running')
+        """返工有界；超限独立审计，任务状态与计数不变。"""
+        worker = self._review_worker(role, attempt)
+        if worker['state'] != 'reported':
+            raise RuntimeError('rework requires reported worker')
+        count = worker.get('reworkCount', 0)
+        limit = self.state.get('limits', {}).get('maxReworkPerWorker', 2)
+        if type(limit) is not int or limit < 0:
+            raise ValueError('invalid maxReworkPerWorker')
+        if count >= limit:
+            log_event(self.state_path.parent / 'audit.jsonl', 'rework.limit_reached',
+                      role=role, attempt=attempt, count=count, limit=limit,
+                      decision='blocked; leader decision required')
+            raise RuntimeError('rework limit reached; leader decision required')
+        snapshot = copy.deepcopy(self.state)
+        try:
+            worker['reworkCount'] = count + 1
+            worker['reworkNotes'] = notes
+            worker['activityRevision'] = worker.get('activityRevision', 0) + 1
+            for key in ('stopStatus', 'stopActivityRevision', 'report', 'acceptance', 'verificationPlan'):
+                worker.pop(key, None)
+            self.transition_worker(role, attempt, 'running')
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
         return worker['reworkCount']
 
     def resolve_dispatch(self, role, attempt, result):
