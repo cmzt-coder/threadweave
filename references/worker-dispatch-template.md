@@ -62,13 +62,15 @@ Owned write set (a report, not a security boundary):
 - An undeclared path is not implicitly yours, and a missing declaration never means the whole repository. If a path outside this set becomes necessary, stop and ask the leader; do not widen the write set yourself. Patterns that cannot be proven disjoint are rejected conservatively rather than silently allowed.
 
 Independent acceptance (leader-executed; your own runs do not count):
-- Verify plan: <path to this run's verify.json, or "none for this run">
-- The leader executes that plan against your actual branch tip, bound to run, role, attempt, task revision and stage worker, and re-checks that HEAD and the worktree did not change while it ran. Acceptance also requires that you have stopped writing and that the task revision still matches.
-- Put your own commands and results in the report as selfReportedVerification. If no plan exists for this run, the leader records the branch as unverified — never as passed.
+- Verify plan: <path to this run's verify.json>
+- Stage worker: the leader runs that plan against your actual branch tip and records the result bound to run, role, attempt, task revision, stage worker, the observed head (your tip) and the plan's planHash. It also re-checks that HEAD and the worktree did not change while the plan ran, and that you have stopped writing.
+- Stage integration: after merging, a separate plan runs against the actual integration HEAD and records its own head and planHash. Integration acceptance failure persists and blocks every later integration until the leader explicitly re-runs verification on the current integration HEAD and it passes; deleting the failure record, accepting a self-report or reusing an older result never clears it.
+- none is not a passing value. It records that the run has no independent acceptance, which is unverified and cannot satisfy the acceptance or integration gate. A branch or merge without an executed plan and its planHash must never be reported as gated-passed.
+- Put your own commands and results in the report as selfReportedVerification.
 
 Machine-readable report:
 - Also write .threadweave/report.json next to the Markdown report. Machine gates read the JSON; the Markdown stays explanatory and is never parsed to decide acceptance.
-- Required fields: runId, role, attempt, threadId, branch, head, reportSha, taskRevision, baseIsAncestor, filesChanged, testsRun, selfReportedVerification, contractChanges, knownRisks. commitSha, if present, must equal head.
+- Required fields: runId, role, attempt, threadId, branch, head, reportSha, taskRevision, baseIsAncestor, filesChanged, testsRun, selfReportedVerification, contractChanges, knownRisks. commitSha, if present, must equal head. All list fields hold strings; testsRun is the list of verify plan step IDs, not command lines or result objects.
 - reportSha is the SHA-256 of the canonical JSON (sorted keys, no insignificant whitespace, UTF-8) with reportSha and acceptedAt removed. It is never a hash of the Markdown file.
 - filesChanged must match the leader's independently collected diff: list both sides of a rename, and nothing you did not touch.
 

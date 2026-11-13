@@ -135,7 +135,7 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 
 ## First iteration and validation
 
-See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols, templates and local helper modules. Independent acceptance plans, structured report validation and write-set reservation are local helpers, not host guarantees: a run that has not wired them records results as unverified rather than passed. Local Git and fake-adapter checks do not replace a real-thread smoke test.
+See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols, templates and local helper modules. Independent acceptance plans, structured report validation and write-set reservation are local helpers, not host guarantees: a branch or merge without an executed acceptance plan is recorded as unverified, never as passed, and a failed integration acceptance blocks later integrations until the leader re-verifies the current integration HEAD. Local Git and fake-adapter checks do not replace a real-thread smoke test.
 
 ## Local tests
 
@@ -145,9 +145,10 @@ Run all local smoke suites:
 python3 tests/run_all.py
 ```
 
-This runs every `tests/*_smoke.py` suite and prints a JSON summary (`passed` plus the
-checks that ran) for each. These checks cover local Git primitives, schema/state logic and
-fake-adapter controller logic; they do not replace a real worker smoke test.
+This runs every `tests/*_smoke.py` suite, parses each suite's JSON output, prints an `OK`
+or `FAIL` line per suite plus the total number of passed assertions, and exits non-zero if
+any suite fails. These checks cover local Git primitives, schema/state logic and fake-adapter
+controller logic; they do not replace a real worker smoke test.
 
 ## Project origin
 
