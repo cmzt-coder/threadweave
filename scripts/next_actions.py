@@ -10,9 +10,11 @@ from recovery import build_recovery_plan
 
 
 UNRESOLVED_DISPATCH_RESULTS = {'pending', 'unknown'}
+HALTED_RUN_STATUSES = {'complete', 'failed', 'aborted', 'cleanup_pending', 'cancelled'}
 CLEANUP_DUE_RUN_STATUSES = {'complete', 'failed', 'aborted', 'cleanup_pending'}
 
 PRIORITY_DISPATCH = 10
+PRIORITY_INTEGRATION_BLOCKED = 15
 PRIORITY_MISSING_EVIDENCE = 20
 PRIORITY_BLOCK = 30
 PRIORITY_RECREATE = 40
@@ -70,6 +72,23 @@ def _unique(items):
         if item not in result:
             result.append(item)
     return result
+
+
+def _integration_block(state):
+    """读取 O01 的 integrationBlocked；兼容布尔值与对象两种持久化形态。"""
+    value = state.get('integrationBlocked')
+    if value is False or value is None:
+        return None
+    if value is True:
+        return {'blocked': True}
+    if isinstance(value, dict):
+        if value.get('resolved') is True or value.get('blocked') is False:
+            return None
+        status = str(value.get('status', '')).lower()
+        if status in ('resolved', 'cleared', 'recovered', 'complete', 'passed', 'ok'):
+            return None
+        return dict(value) if value else {'blocked': True}
+    return {'value': value}
 
 
 def _parse_time(value):
@@ -211,6 +230,61 @@ def _make_action(action, worker, reason, observed, missing=None, prerequisites=N
     }
     result.update(extra)
     return result
+
+
+def _integration_blocked_action(block):
+    details = {}
+    for key in ('worker', 'role', 'attempt', 'reason', 'message', 'at', 'observedAt',
+                'verification', 'planHash', 'head'):
+        if key in block:
+            details[key] = block[key]
+    observed_at = block.get('at') or block.get('observedAt')
+    reason = (
+        'integrationBlocked is active; worker reuse/recreate/send is globally blocked. '
+        'The leader must explicitly rerun recover_integration verification at the current integration HEAD.'
+    )
+    detail = block.get('reason') or block.get('message')
+    if detail:
+        reason += f' Blocking evidence: {detail}'
+    return _make_action(
+        'recover_integration', 'run#1', reason, {'observedAt': observed_at},
+        prerequisites=[
+            'leader explicitly authorizes recover_integration',
+            'current integration HEAD is stable',
+            'fresh integration verification plan passes',
+        ],
+        priority=PRIORITY_INTEGRATION_BLOCKED,
+        requiredAction='recover_integration',
+        recoveryExecutionBlocked=True,
+        integrationBlocked=details or True,
+    )
+
+
+def _blocked_recovery_action(worker, observed, recovery_action, run_status,
+                             integration_blocked):
+    key = _worker_key(worker)
+    if run_status in HALTED_RUN_STATUSES:
+        reason = (
+            f'run is {run_status}; recovery execution is globally blocked. '
+            'Verify thread stop and cleanup evidence only.'
+        )
+        prerequisites = ['verify thread idle/stopped', 'complete cleanup evidence']
+    else:
+        reason = (
+            'integrationBlocked is active; worker reuse/recreate/send is blocked '
+            'until leader recover_integration verification passes.'
+        )
+        prerequisites = ['leader recover_integration decision', 'fresh integration verification']
+    return _make_action(
+        'revalidate', key, reason, observed,
+        missing=recovery_action.get('missingEvidence', []),
+        prerequisites=prerequisites,
+        priority=PRIORITY_MISSING_EVIDENCE,
+        recoveryExecutionBlocked=True,
+        blockedAction=recovery_action.get('action'),
+        runStatus=run_status,
+        integrationBlocked=bool(integration_blocked),
+    )
 
 
 def _mismatch_reason(worker, observed):
@@ -408,12 +482,15 @@ def _cleanup_actions(worker, observed, cleanup, state):
     if worktree_action == 'remove':
         actions.append(_make_action(
             'remove_worktree', key,
-            'cleanup evidence permits worktree removal after report and stop verification',
+            'cleanup classifier reports worktree removal is eligible, but this read-only '
+            'suggestion requires leader confirmation before any cleanup action',
             observed,
-            prerequisites=['preserve/verify report', 'confirm branch preservation or merge'],
+            prerequisites=['preserve/verify report', 'confirm branch preservation or merge',
+                           'leader confirms worktree cleanup authorization'],
             priority=PRIORITY_CLEANUP,
             cleanupKind='worktree',
             cleanupAction=worktree_action,
+            authorizationRequired=True,
         ))
     elif worktree_action not in (None, 'already_removed'):
         if worktree_action in ('protect_unknown', 'protect_stale'):
@@ -433,14 +510,16 @@ def _cleanup_actions(worker, observed, cleanup, state):
     branch_action = cleanup.get('branch')
     if branch_action == 'delete':
         actions.append(_make_action(
-            'delete_branch', key,
-            'branch is merged into integration and not checked out; deletion is safe '
-            'after current evidence is rechecked',
+            'review_branch_retention', key,
+            'cleanup classifier reports branch delete-eligible, but branch audit retention '
+            'requires manual review; this suggestion does not authorize deletion',
             observed,
-            prerequisites=['confirm merge and ownership remain unchanged'],
+            prerequisites=['manual branch retention review', 'leader explicit approval',
+                           'confirm archive/audit policy'],
             priority=PRIORITY_CLEANUP,
             cleanupKind='branch',
             cleanupAction=branch_action,
+            authorizationRequired=True,
         ))
     elif branch_action not in (None, 'already_removed'):
         if branch_action in ('protect_unknown', 'protect_stale'):
@@ -532,12 +611,27 @@ def build_next_actions(state, observations=None):
         or cleanup_status in ('partial', 'failed')
     ) and cleanup_status != 'complete'
 
+    integration_block = _integration_block(state)
+    run_recovery_blocked = run_status in HALTED_RUN_STATUSES
+    execution_blocked = bool(integration_block) or run_recovery_blocked
+
     actions = []
+    if integration_block and not run_recovery_blocked:
+        actions.append(_integration_blocked_action(integration_block))
+
     for worker in workers:
         key = _worker_key(worker)
         observed = observations.get(key, {})
         recovery = recovery_plan.get(key, {'action': 'revalidate'})
         action = _recovery_action(worker, observed, recovery, state)
+        if action is not None and execution_blocked:
+            if action.get('action') in ('reuse', 'recreate'):
+                action = _blocked_recovery_action(
+                    worker, observed, action, run_status, integration_block)
+            else:
+                action['recoveryExecutionBlocked'] = True
+                action['runStatus'] = run_status
+                action['integrationBlocked'] = bool(integration_block)
         if action is not None:
             actions.append(action)
 
@@ -572,6 +666,8 @@ def build_next_actions(state, observations=None):
         'runId': state.get('runId'),
         'runStatus': run_status,
         'cleanupStatus': cleanup_status,
+        'runExecutionBlocked': execution_blocked,
+        'integrationBlocked': bool(integration_block),
         'readOnly': True,
         'actions': actions,
     }

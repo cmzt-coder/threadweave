@@ -155,6 +155,92 @@ check('pending-dispatch-priority', ordered['actions'][0]['priority'] < ordered['
 check('pending-dispatch-does-not-recreate',
       all(a['action'] != 'recreate' for a in ordered['actions'] if a['worker'] == 'b#1'))
 
+# integrationBlocked 必须生成运行级重验建议，并全局禁止 worker 恢复执行。
+blocked_state = state_with(
+    [healthy], status='integrating', cleanup_status='pending',
+    integrationBlocked={
+        'status': 'blocked', 'reason': 'integration verification failed', 'at': now(),
+    },
+)
+blocked_plan = build_next_actions(
+    blocked_state, {'a#1': recovery_observation(healthy)})
+blocked_actions = blocked_plan['actions']
+check('integration-blocked-top-level', blocked_plan['integrationBlocked'] is True)
+check('integration-blocked-execution-flag', blocked_plan['runExecutionBlocked'] is True)
+check('integration-blocked-global-action',
+      any(a['action'] == 'recover_integration' and a['worker'] == 'run#1'
+          for a in blocked_actions))
+check('integration-blocked-required-action',
+      any(a.get('requiredAction') == 'recover_integration' for a in blocked_actions))
+check('integration-blocked-no-execution',
+      all(a['action'] not in ('reuse', 'recreate') for a in blocked_actions))
+check('integration-blocked-worker-recheck',
+      any(a['worker'] == 'a#1' and a['action'] == 'revalidate'
+          and a.get('recoveryExecutionBlocked') is True for a in blocked_actions))
+
+empty_block_plan = build_next_actions(
+    state_with(
+        [healthy], status='integrating', cleanup_status='pending',
+        integrationBlocked={},
+    ),
+    {'a#1': recovery_observation(healthy)},
+)
+check('empty-integration-block-object-detected',
+      any(a['action'] == 'recover_integration' for a in empty_block_plan['actions']))
+
+resolved_block_plan = build_next_actions(
+    state_with(
+        [healthy], status='observing', cleanup_status='pending',
+        integrationBlocked={'status': 'resolved'},
+    ),
+    {'a#1': recovery_observation(healthy)},
+)
+check('resolved-integration-block-not-active',
+      all(a['action'] != 'recover_integration' for a in resolved_block_plan['actions']))
+
+blocked_pending = build_next_actions(
+    state_with(
+        [pending_worker], status='integrating', cleanup_status='pending',
+        integrationBlocked=True,
+    ),
+    {'b#1': recovery_observation(pending_worker)},
+)
+check('integration-blocked-pending-dispatch-first',
+      blocked_pending['actions'][0]['worker'] == 'b#1'
+      and blocked_pending['actions'][0].get('dispatchResult') == 'pending')
+check('integration-blocked-recover-second',
+      any(a['action'] == 'recover_integration'
+          for a in blocked_pending['actions'][1:]))
+
+# failed / aborted / cleanup_pending 只允许停止与清理复核，不得恢复执行。
+for halted_status in ('failed', 'aborted', 'cleanup_pending'):
+    halted_plan = build_next_actions(
+        state_with([healthy], status=halted_status, cleanup_status='pending'),
+        {'a#1': recovery_observation(healthy)},
+    )
+    check(f'{halted_status}-no-execution',
+          all(a['action'] not in ('reuse', 'recreate')
+              for a in halted_plan['actions']))
+    check(f'{halted_status}-blocked-recheck',
+          any(a['action'] == 'revalidate'
+              and a.get('recoveryExecutionBlocked') is True
+              for a in halted_plan['actions']))
+    check(f'{halted_status}-no-integration-recover',
+          all(a['action'] != 'recover_integration' for a in halted_plan['actions']))
+
+halted_with_block = build_next_actions(
+    state_with(
+        [healthy], status='failed', cleanup_status='pending',
+        integrationBlocked={'status': 'blocked', 'reason': 'stale integration failure'},
+    ),
+    {'a#1': recovery_observation(healthy)},
+)
+check('failed-run-suppresses-integration-recover',
+      all(a['action'] != 'recover_integration'
+          for a in halted_with_block['actions']))
+check('failed-run-only-stop-cleanup',
+      any('stop' in a['reason'].lower() for a in halted_with_block['actions']))
+
 # reported 报告 SHA 不一致必须阻断。
 reported = make_worker(state='reported')
 reported_bad = recovery_observation(reported, report_sha='c' * 40)
@@ -239,9 +325,24 @@ cleanup_state = state_with([archived], status='aborted', cleanup_status='pending
 cleanup_plan = build_next_actions(cleanup_state, {'a#1': cleanup_observation(archived)})
 cleanup_actions = {a['action'] for a in cleanup_plan['actions']}
 check('cleanup-debt-worktree-action', 'remove_worktree' in cleanup_actions)
-check('cleanup-debt-branch-action', 'delete_branch' in cleanup_actions)
+check('cleanup-debt-branch-retention-review',
+      'review_branch_retention' in cleanup_actions)
+check('cleanup-debt-no-delete-action',
+      'delete_branch' not in cleanup_actions)
 check('cleanup-debt-no-recovery-action',
       all(a['action'] not in ('recreate', 'reuse') for a in cleanup_plan['actions']))
+branch_review = next(
+    a for a in cleanup_plan['actions'] if a['action'] == 'review_branch_retention')
+check('cleanup-branch-classification-preserved',
+      branch_review.get('cleanupAction') == 'delete')
+check('cleanup-branch-no-delete-authorization',
+      branch_review.get('authorizationRequired') is True
+      and 'does not authorize deletion' in branch_review['reason'])
+check('cleanup-branch-no-safety-claim', 'safe' not in branch_review['reason'].lower())
+worktree_review = next(
+    a for a in cleanup_plan['actions'] if a['action'] == 'remove_worktree')
+check('cleanup-worktree-requires-confirmation',
+      worktree_review.get('authorizationRequired') is True)
 
 # 清理证据缺失、停止证据不足、脏工作树都必须保护或重验。
 cleanup_missing = build_next_actions(cleanup_state, {})
