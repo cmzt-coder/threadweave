@@ -6,6 +6,7 @@
 from datetime import datetime, timezone
 
 from cleanup import build_cleanup_plan
+from failure import failure_summary, latest_unresolved_failure, unresolved_failures
 from recovery import build_recovery_plan
 
 
@@ -599,6 +600,9 @@ def build_next_actions(state, observations=None):
             'runStatus': run_status,
             'cleanupStatus': cleanup_status,
             'readOnly': True,
+            'unresolvedFailures': [
+                failure_summary(item) for item in unresolved_failures(state)
+            ],
             'actions': [],
         }
 
@@ -620,6 +624,10 @@ def build_next_actions(state, observations=None):
         observed = observations.get(key, {})
         recovery = recovery_plan.get(key, {'action': 'revalidate'})
         action = _recovery_action(worker, observed, recovery, state)
+        failure = latest_unresolved_failure(
+            state, role=worker.get('role'), attempt=worker.get('attempt', 1))
+        if action is not None and failure:
+            action['failure'] = failure_summary(failure)
         if action is not None and execution_blocked:
             if action.get('action') in ('reuse', 'recreate'):
                 action = _blocked_recovery_action(
@@ -665,5 +673,8 @@ def build_next_actions(state, observations=None):
         'runExecutionBlocked': execution_blocked,
         'integrationBlocked': bool(integration_block),
         'readOnly': True,
+        'unresolvedFailures': [
+            failure_summary(item) for item in unresolved_failures(state)
+        ],
         'actions': actions,
     }

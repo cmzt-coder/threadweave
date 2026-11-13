@@ -161,6 +161,13 @@ with tempfile.TemporaryDirectory(prefix='threadweave-host-fault-') as d:
         check('create-timeout-raised', True)
     saved = read_state(run_state_path(root, 'run-timeout'))
     check('create-timeout-recorded', saved['lastCreateError']['code'] == 'create_timeout')
+    check('create-timeout-source', saved['lastCreateError']['source'] == 'host_api')
+    check('create-timeout-certainty', saved['lastCreateError']['resultCertainty'] == 'unknown')
+    check('create-timeout-not-retryable', saved['lastCreateError']['retryable'] is False)
+    check('create-timeout-reconcile',
+          saved['lastCreateError']['recommendation'] == 'reconcile_result')
+    check('create-timeout-top-level-error',
+          saved['errors'][-1]['code'] == 'create_timeout')
     check('create-timeout-no-message',
           not any(call[0] == 'send_message' for call in timeout_adapter.calls))
 

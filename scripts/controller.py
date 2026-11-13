@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 
 from budget import check_retry
+from failure import FAILURE_SOURCES, build_failure_record
 from host_adapter import HostActionPending, HostAdapter
 from startup_gate import validate_startup
 from run_log import log_event
@@ -216,8 +217,24 @@ class Controller:
         except HostActionPending:
             # 请求账本负责区分 pending/in_flight/unknown，控制器不猜测调用结果。
             raise
-        except Exception:
+        except Exception as exc:
             worker['dispatchIntent']['result'] = 'unknown'
+            source = getattr(exc, 'failure_source', 'unknown')
+            if source not in FAILURE_SOURCES:
+                source = 'unknown'
+            failure = build_failure_record(
+                source=source,
+                code=getattr(exc, 'failure_code', 'dispatch_result_unknown'),
+                stage='dispatch',
+                message=f'{type(exc).__name__}: {exc}',
+                scope=f'{role}#{attempt}',
+                result_certainty=getattr(exc, 'result_certainty', 'unknown'),
+                retryable=False,
+                evidence=getattr(
+                    exc, 'evidence',
+                    'adapter raised without a definitive send result; reconcile before retry'),
+            )
+            self.state.setdefault('errors', []).append(failure)
             self.save()
             raise
         return self._finish_dispatch(role, attempt)
@@ -612,6 +629,19 @@ class Controller:
         self.save()
         return self.state['hostCapabilities']
 
+    def record_failure(self, source, code, stage, message, scope='run',
+                       result_certainty='confirmed_failure', retryable=False,
+                       recommendation=None, evidence=None, retry_evidence=None):
+        """持久化规范化失败记录，不执行任何恢复或重试动作。"""
+        failure = build_failure_record(
+            source=source, code=code, stage=stage, message=message, scope=scope,
+            result_certainty=result_certainty, retryable=retryable,
+            recommendation=recommendation, evidence=evidence,
+            retry_evidence=retry_evidence)
+        self.state.setdefault('errors', []).append(failure)
+        self.save()
+        return failure
+
     def create_worker(self, prompt, project_id, timeout_seconds=300):
         """创建 worker；超时记录证据后抛出，不自动重试或发送消息。"""
         if self.state.get('status') in ('aborted', 'failed', 'complete', 'cleanup_pending'):
@@ -637,11 +667,13 @@ class Controller:
                     prompt, project_id, timeout_seconds=timeout_seconds)
             return self.adapter.create_worker(prompt, project_id)
         except TimeoutError as exc:
-            self.state['lastCreateError'] = {
-                'code': 'create_timeout',
-                'message': str(exc),
-                'at': _now_iso(),
-            }
+            failure = build_failure_record(
+                source='host_api', code='create_timeout', stage='create_worker',
+                message=f'{type(exc).__name__}: {exc}', scope='run',
+                result_certainty='unknown', retryable=False,
+                evidence='create call timed out; whether a thread or worktree was created is unknown')
+            self.state['lastCreateError'] = dict(failure)
+            self.state.setdefault('errors', []).append(failure)
             self.save()
             raise
 

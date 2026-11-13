@@ -221,6 +221,13 @@ with tempfile.TemporaryDirectory() as d:
     fail_saved = read_state(run_state_path(d, 'run-send-fail'))
     check('send-failure-unknown',
           fail_saved['workers'][0]['dispatchIntent']['result'] == 'unknown')
+    send_error = fail_saved['errors'][-1]
+    check('send-failure-source', send_error['source'] == 'unknown')
+    check('send-failure-certainty', send_error['resultCertainty'] == 'unknown')
+    check('send-failure-not-retryable', send_error['retryable'] is False)
+    check('send-failure-reconcile',
+          send_error['recommendation'] == 'reconcile_result')
+    check('send-failure-scope', send_error['scope'] == 'a#1')
 
     wrong_role_controller = Controller(FakeAdapter(), d, 'run-wrong-role', make_state('run-wrong-role'))
     try:
@@ -481,6 +488,16 @@ with tempfile.TemporaryDirectory() as d:
     write_fail_controller.save()
     check('write-retry-succeeds',
           read_state(run_state_path(d, 'run-write-fail'))['revision'] == revision_before + 1)
+
+    failure_controller = Controller(
+        FakeAdapter(), d, 'run-failure-record', make_state('run-failure-record'))
+    failure = failure_controller.record_failure(
+        'workspace_setup', 'dependency_install_failed', 'setup',
+        'npm install failed', scope='a#1')
+    check('record-failure-returns-normalized', failure['source'] == 'workspace_setup')
+    failure_saved = read_state(run_state_path(d, 'run-failure-record'))
+    check('record-failure-persisted',
+          failure_saved['errors'][-1]['recommendation'] == 'verify_idempotency_then_rerun_setup')
 
     mismatch_controller = Controller(
         FakeAdapter(), d, 'run-mismatch', make_state('wrong-run'))

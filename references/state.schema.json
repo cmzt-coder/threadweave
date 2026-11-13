@@ -291,6 +291,52 @@
                 "at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "provider",
+                    "host_api",
+                    "supervisor_process",
+                    "workspace_setup",
+                    "model_output",
+                    "acceptance",
+                    "worker_process",
+                    "unknown"
+                  ]
+                },
+                "stage": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "resultCertainty": {
+                  "type": "string",
+                  "enum": [
+                    "confirmed_failure",
+                    "unknown"
+                  ]
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "recommendation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "retryEvidence": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "scope": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "resolved": {
+                  "type": "boolean"
                 }
               }
             }
@@ -1005,6 +1051,45 @@
           },
           "resolved": {
             "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "provider",
+              "host_api",
+              "supervisor_process",
+              "workspace_setup",
+              "model_output",
+              "acceptance",
+              "worker_process",
+              "unknown"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultCertainty": {
+            "type": "string",
+            "enum": [
+              "confirmed_failure",
+              "unknown"
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retryEvidence": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -1039,6 +1124,52 @@
         "at": {
           "type": "string",
           "format": "date-time"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "host_api",
+            "supervisor_process",
+            "workspace_setup",
+            "model_output",
+            "acceptance",
+            "worker_process",
+            "unknown"
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resultCertainty": {
+          "type": "string",
+          "enum": [
+            "confirmed_failure",
+            "unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryEvidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resolved": {
+          "type": "boolean"
         }
       }
     },

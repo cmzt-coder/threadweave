@@ -3,14 +3,23 @@
 根据持久状态与外部观察（thread / worktree / branch / HEAD / 干净状态）给出恢复动作，
 用于避免重复创建和重复派发。纯函数，不调用宿主 API，也不修改仓库。
 """
+from failure import latest_unresolved_failure
+
+
 TERMINAL_STATES = {'integrated', 'archived', 'failed', 'cancelled'}
 
 
-def classify_worker_recovery(worker, observed, replacement_limit=1):
+def classify_worker_recovery(worker, observed, replacement_limit=1, failure=None):
     """返回单个 worker 的恢复动作：skip/recreate/block/revalidate/reuse。"""
     state = worker.get('state')
     if state in TERMINAL_STATES:
         return 'skip'
+
+    # 未决或来源未确认的失败必须先核对，不能凭“线程不存在”直接重建。
+    if (isinstance(failure, dict)
+            and (failure.get('resultCertainty') == 'unknown'
+                 or failure.get('recommendation') == 'reconcile_result')):
+        return 'revalidate'
 
     # unknown 先重验，不 recreation
     if observed.get('thread_exists') is None:
@@ -62,10 +71,14 @@ def build_recovery_plan(state, observations, replacement_limit=1):
     plan = {}
     for worker in state.get('workers', []):
         key = f"{worker.get('role')}#{worker.get('attempt')}"
+        failure = latest_unresolved_failure(
+            state, role=worker.get('role'), attempt=worker.get('attempt', 1))
         action = classify_worker_recovery(
-            worker, observations.get(key, {}), replacement_limit)
+            worker, observations.get(key, {}), replacement_limit, failure=failure)
         plan[key] = {
             'action': action,
             'duplicate_dispatch_risk': action == 'reuse' and worker.get('state') == 'dispatched',
         }
+        if failure:
+            plan[key]['failure'] = failure
     return plan
