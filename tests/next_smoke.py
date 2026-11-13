@@ -1,0 +1,370 @@
+"""验证 O04 只读恢复建议与 next CLI，不调用宿主 API 或执行清理。"""
+import io
+import json
+import sys
+import tempfile
+import time
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
+from pathlib import Path
+
+project = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project / 'scripts'))
+from next_actions import build_next_actions  # noqa: E402
+from state_store import run_state_path, write_state_atomic  # noqa: E402
+from threadweave import main, next_plan  # noqa: E402
+
+results = []
+BASE = 'a' * 40
+HEAD = 'b' * 40
+
+
+def check(name, condition):
+    if not condition:
+        raise AssertionError(name)
+    results.append(name)
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+
+def make_worker(state='ready', **overrides):
+    worker = {
+        'role': 'a',
+        'attempt': 1,
+        'state': state,
+        'threadId': 'thread-a',
+        'branch': 'tw/a-1',
+        'baseSha': BASE,
+        'createdAt': now(),
+        'deadline': now(),
+        'lastObservation': now(),
+        'errors': [],
+    }
+    worker.update(overrides)
+    return worker
+
+
+def recovery_observation(worker, **overrides):
+    observed = {
+        'observedAt': now(),
+        'thread_exists': True,
+        'thread_status': 'idle',
+        'worktree_exists': True,
+        'branch': worker['branch'],
+        'head': worker['baseSha'],
+        'status_porcelain': '',
+    }
+    if worker.get('state') in ('running', 'blocked', 'reported'):
+        observed['head'] = HEAD
+        observed['base_is_ancestor'] = True
+    if worker.get('state') == 'reported':
+        observed['report_sha'] = HEAD
+    observed.update(overrides)
+    return observed
+
+
+def cleanup_observation(worker, **overrides):
+    observed = {
+        'observedAt': now(),
+        'thread_exists': True,
+        'thread_status': 'archived',
+        'worktree_exists': True,
+        'head': BASE,
+        'status_porcelain': '',
+        'branch': {
+            'name': worker['branch'],
+            'branch_exists': True,
+            'owned_by_run': True,
+            'checked_out': False,
+            'merged_into_integration': True,
+        },
+        'worktree': {
+            'worktree_exists': True,
+            'is_shared': False,
+            'is_primary': False,
+            'owned_by_run': True,
+            'status_porcelain': '',
+            'unmerged_commits': False,
+            'worker_status': 'archived',
+        },
+        'report_archived': True,
+        'stop': {
+            'thread_idle': True,
+            'final_answer_present': True,
+            'no_active_turn': True,
+        },
+    }
+    observed.update(overrides)
+    return observed
+
+
+def state_with(workers, status='observing', cleanup_status='pending', **extra):
+    state = {
+        'runId': 'run-next',
+        'status': status,
+        'workers': workers,
+        'cleanup': {'status': cleanup_status},
+    }
+    state.update(extra)
+    return state
+
+
+# 完整观察下可复用，且不把请求配置误当成观测身份。
+healthy = make_worker()
+plan = build_next_actions(state_with([healthy]), {'a#1': recovery_observation(healthy)})
+check('healthy-reuse-action', plan['actions'][0]['action'] == 'reuse')
+check('read-only-marker', plan['readOnly'] is True)
+check('role-attempt-key', plan['actions'][0]['worker'] == 'a#1')
+check('observed-at-preserved', bool(plan['actions'][0]['observedAt']))
+check('no-lost-resume-actions',
+      all(a['action'] not in ('lost', 'resume') for a in plan['actions']))
+
+legacy_observation = recovery_observation(healthy)
+legacy_observation.pop('observedAt')
+legacy_plan = build_next_actions(state_with([healthy]), {'a#1': legacy_observation})
+check('legacy-recovery-format-reuse', legacy_plan['actions'][0]['action'] == 'reuse')
+
+# 缺失外部观察只能要求重新核对，不能建议 recreation/reuse/send。
+missing = build_next_actions(state_with([healthy]))
+check('missing-observation-revalidate', missing['actions'][0]['action'] == 'revalidate')
+check('missing-evidence-listed',
+      'thread_exists' in missing['actions'][0]['missingEvidence'])
+check('missing-observation-no-direct-action',
+      all(a['action'] not in ('recreate', 'reuse', 'send', 'create')
+          for a in missing['actions']))
+
+# pending/unknown dispatch 必须优先核对。
+pending_worker = make_worker(
+    role='b',
+    threadId='thread-b',
+    branch='tw/b-1',
+    dispatchIntent={
+        'dispatchId': 'd1', 'message': 'dispatch', 'at': now(), 'result': 'pending',
+    },
+)
+ordered = build_next_actions(
+    state_with([healthy, pending_worker]),
+    {'a#1': recovery_observation(healthy),
+     'b#1': recovery_observation(pending_worker)},
+)
+check('pending-dispatch-first', ordered['actions'][0]['worker'] == 'b#1')
+check('pending-dispatch-revalidate', ordered['actions'][0]['action'] == 'revalidate')
+check('pending-dispatch-priority', ordered['actions'][0]['priority'] < ordered['actions'][1]['priority'])
+check('pending-dispatch-does-not-recreate',
+      all(a['action'] != 'recreate' for a in ordered['actions'] if a['worker'] == 'b#1'))
+
+# reported 报告 SHA 不一致必须阻断。
+reported = make_worker(state='reported')
+reported_bad = recovery_observation(reported, report_sha='c' * 40)
+reported_plan = build_next_actions(state_with([reported]), {'a#1': reported_bad})
+check('reported-sha-mismatch-block', reported_plan['actions'][0]['action'] == 'block')
+
+# 线程确认不存在时才允许 recreate；缺少工作树或存在未保护成果时不得直接 recreate。
+gone = make_worker(threadId='thread-a')
+gone_obs = recovery_observation(
+    gone, thread_exists=False, thread_status=None, worktree_exists=False,
+)
+gone_obs.pop('head')
+gone_obs.pop('branch')
+gone_obs.pop('status_porcelain')
+recreate_plan = build_next_actions(state_with([gone]), {'a#1': gone_obs})
+check('confirmed-gone-recreate', recreate_plan['actions'][0]['action'] == 'recreate')
+
+unknown_worktree = {
+    'observedAt': now(),
+    'thread_exists': False,
+    'thread_status': None,
+}
+unknown_plan = build_next_actions(state_with([gone]), {'a#1': unknown_worktree})
+check('recreate-requires-worktree-evidence',
+      unknown_plan['actions'][0]['action'] == 'revalidate')
+check('recreate-missing-worktree-listed',
+      'worktree_exists' in unknown_plan['actions'][0]['missingEvidence'])
+
+dirty_gone = recovery_observation(
+    gone, thread_exists=False, thread_status=None, status_porcelain=' M notes.md',
+    worktree={'unmerged_commits': False},
+)
+dirty_plan = build_next_actions(state_with([gone]), {'a#1': dirty_gone})
+check('dirty-worktree-blocks-recreate', dirty_plan['actions'][0]['action'] == 'block')
+check('dirty-worktree-reason', 'uncommitted' in dirty_plan['actions'][0]['reason'])
+
+limited_gone = make_worker(threadId=None)
+limited_obs = recovery_observation(
+    limited_gone, thread_exists=False, thread_status=None, worktree_exists=False,
+)
+limited_obs.pop('head')
+limited_obs.pop('branch')
+limited_obs.pop('status_porcelain')
+limited_plan = build_next_actions(
+    state_with([limited_gone], limits={'replacementPerRole': 0}),
+    {'a#1': limited_obs},
+)
+check('replacement-limit-block', limited_plan['actions'][0]['action'] == 'block')
+
+# 陈旧观察不能作为直接动作依据。
+stale_worker = make_worker()
+stale_obs = recovery_observation(
+    stale_worker, observedAt='2000-01-01T00:00:00+00:00', maxAgeSeconds=60,
+)
+stale_plan = build_next_actions(state_with([stale_worker]), {'a#1': stale_obs})
+check('stale-observation-revalidate', stale_plan['actions'][0]['action'] == 'revalidate')
+check('stale-observation-flag', stale_plan['actions'][0]['stale'] is True)
+
+invalid_time_obs = recovery_observation(healthy, observedAt='not-a-time')
+invalid_time_plan = build_next_actions(state_with([healthy]), {'a#1': invalid_time_obs})
+check('invalid-observation-time-revalidate',
+      invalid_time_plan['actions'][0]['action'] == 'revalidate')
+
+missing_time_freshness = recovery_observation(healthy)
+missing_time_freshness.pop('observedAt')
+missing_time_freshness['maxAgeSeconds'] = 60
+missing_time_plan = build_next_actions(
+    state_with([healthy]), {'a#1': missing_time_freshness})
+check('max-age-requires-observation-time',
+      missing_time_plan['actions'][0]['action'] == 'revalidate')
+
+# complete 且 cleanup complete 必须无动作。
+complete = state_with(
+    [make_worker(state='archived')], status='complete', cleanup_status='complete',
+)
+complete_plan = build_next_actions(complete, {})
+check('complete-cleanup-no-actions', complete_plan['actions'] == [])
+
+# 清理债务即使 worker 已归档也要给出只读清理建议。
+archived = make_worker(state='archived')
+cleanup_state = state_with([archived], status='aborted', cleanup_status='pending')
+cleanup_plan = build_next_actions(cleanup_state, {'a#1': cleanup_observation(archived)})
+cleanup_actions = {a['action'] for a in cleanup_plan['actions']}
+check('cleanup-debt-worktree-action', 'remove_worktree' in cleanup_actions)
+check('cleanup-debt-branch-action', 'delete_branch' in cleanup_actions)
+check('cleanup-debt-no-recovery-action',
+      all(a['action'] not in ('recreate', 'reuse') for a in cleanup_plan['actions']))
+
+# 清理证据缺失、停止证据不足、脏工作树都必须保护或重验。
+cleanup_missing = build_next_actions(cleanup_state, {})
+check('cleanup-missing-revalidate', cleanup_missing['actions'][0]['action'] == 'revalidate')
+check('cleanup-missing-evidence',
+      'worktree' in cleanup_missing['actions'][0]['missingEvidence'])
+
+stop_obs = cleanup_observation(archived)
+stop_obs['stop'] = {
+    'thread_idle': False, 'final_answer_present': True, 'no_active_turn': True,
+}
+stop_plan = build_next_actions(cleanup_state, {'a#1': stop_obs})
+check('cleanup-stop-unverified-revalidate', stop_plan['actions'][0]['action'] == 'revalidate')
+check('cleanup-stop-unverified-no-delete',
+      all(a['action'] not in ('remove_worktree', 'delete_branch') for a in stop_plan['actions']))
+
+dirty_cleanup_obs = cleanup_observation(archived)
+dirty_cleanup_obs['worktree']['status_porcelain'] = ' M x'
+dirty_cleanup_plan = build_next_actions(cleanup_state, {'a#1': dirty_cleanup_obs})
+check('cleanup-dirty-blocks-removal',
+      all(a['action'] != 'remove_worktree' for a in dirty_cleanup_plan['actions']))
+check('cleanup-dirty-has-block',
+      any(a['action'] == 'block' for a in dirty_cleanup_plan['actions']))
+
+run_only_cleanup = state_with([], status='aborted', cleanup_status='partial')
+run_only_plan = build_next_actions(run_only_cleanup, {})
+check('cleanup-run-level-debt',
+      any(a['worker'] == 'run#1' and a['action'] == 'revalidate'
+          for a in run_only_plan['actions']))
+
+state_before = json.loads(json.dumps(cleanup_state, ensure_ascii=False))
+observation_before = json.loads(json.dumps(
+    {'a#1': cleanup_observation(archived)}, ensure_ascii=False))
+build_next_actions(state_before, observation_before)
+check('pure-state-not-mutated', state_before == cleanup_state)
+check('pure-observations-not-mutated',
+      observation_before['a#1']['branch']['name'] == archived['branch'])
+
+# CLI：自动定位最近未完成 run、显式 run、错误输入与严格只读。
+with tempfile.TemporaryDirectory(prefix='threadweave-next-') as d:
+    d = Path(d)
+    repo = d / 'repo'
+    repo.mkdir()
+
+    write_state_atomic(run_state_path(repo, 'run-incomplete'), {
+        'runId': 'run-incomplete', 'status': 'observing', 'workers': [],
+        'cleanup': {'status': 'pending'},
+    })
+    time.sleep(0.01)
+    write_state_atomic(run_state_path(repo, 'run-complete-newer'), {
+        'runId': 'run-complete-newer', 'status': 'complete', 'workers': [],
+        'cleanup': {'status': 'complete'},
+    })
+
+    latest = next_plan(repo)
+    check('cli-next-latest-incomplete', latest['runId'] == 'run-incomplete')
+
+    output = io.StringIO()
+    with redirect_stdout(output):
+        rc = main(['next', '--repo', str(repo)])
+    parsed = json.loads(output.getvalue())
+    check('cli-next-exit-zero', rc == 0)
+    check('cli-next-json-run', parsed['runId'] == 'run-incomplete')
+
+    complete_state_path = run_state_path(repo, 'run-complete-newer')
+    before_bytes = complete_state_path.read_bytes()
+    before_mtime = complete_state_path.stat().st_mtime_ns
+    output = io.StringIO()
+    with redirect_stdout(output):
+        rc = main(['next', '--repo', str(repo), '--run', 'run-complete-newer'])
+    check('cli-explicit-complete-exit-zero', rc == 0)
+    check('cli-explicit-complete-no-actions', json.loads(output.getvalue())['actions'] == [])
+    check('cli-state-content-unchanged', complete_state_path.read_bytes() == before_bytes)
+    check('cli-state-mtime-unchanged',
+          complete_state_path.stat().st_mtime_ns == before_mtime)
+
+    bad_obs = d / 'bad-observations.json'
+    bad_obs.write_text('{not json', encoding='utf-8')
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        rc = main(['next', '--repo', str(repo), '--run', 'run-incomplete',
+                   '--observations', str(bad_obs)])
+    check('cli-invalid-json-nonzero', rc == 2)
+    check('cli-invalid-json-clear-error', 'invalid observations JSON' in stderr.getvalue())
+
+    wrong_obs = d / 'wrong-observations.json'
+    wrong_obs.write_text('[]', encoding='utf-8')
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        rc = main(['next', '--repo', str(repo), '--run', 'run-incomplete',
+                   '--observations', str(wrong_obs)])
+    check('cli-observations-object-required', rc == 2)
+    check('cli-observations-object-error', 'must be an object' in stderr.getvalue())
+
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        rc = main(['next', '--repo', str(repo), '--run', 'missing-run'])
+    check('cli-missing-run-nonzero', rc == 2)
+    check('cli-missing-run-error', 'run not found' in stderr.getvalue())
+
+    only_complete = d / 'only-complete'
+    only_complete.mkdir()
+    write_state_atomic(run_state_path(only_complete, 'done'), {
+        'runId': 'done', 'status': 'complete', 'workers': [],
+        'cleanup': {'status': 'complete'},
+    })
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        rc = main(['next', '--repo', str(only_complete)])
+    check('cli-no-incomplete-nonzero', rc == 2)
+    check('cli-no-incomplete-error', 'no incomplete run' in stderr.getvalue())
+
+    array_state = run_state_path(repo, 'run-array')
+    array_state.parent.mkdir(parents=True, exist_ok=True)
+    array_state.write_text('[]', encoding='utf-8')
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        rc = main(['next', '--repo', str(repo), '--run', 'run-array'])
+    check('cli-array-state-nonzero', rc == 2)
+    check('cli-array-state-error', 'must be a JSON object' in stderr.getvalue())
+
+print(json.dumps({
+    'passed': len(results),
+    'checks': results,
+    'scope': 'Read-only next recovery suggestions; no host API calls or cleanup execution',
+}, ensure_ascii=False, indent=2))

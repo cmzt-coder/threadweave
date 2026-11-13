@@ -1,7 +1,7 @@
 """Threadweave 本地辅助 CLI。
 
-只做本地 Git/文件检查、状态读取与清理计划输出；不创建线程、不调用宿主 API，
-也不自动执行删除。所有清理相关命令只输出计划（dry-run）。
+只做本地 Git/文件检查、状态读取、恢复建议与清理计划输出；不创建线程、
+不调用宿主 API，也不自动执行删除。所有恢复/清理命令都只输出计划。
 """
 import argparse
 import json
@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from cleanup import build_cleanup_plan
+from next_actions import build_next_actions
 from state_store import latest_incomplete_run, locate_runs, read_state, run_state_path
 
 
@@ -95,9 +96,44 @@ def cleanup_plan(repo, run_id, observations_path):
     return build_cleanup_plan(state, observations)
 
 
+def next_plan(repo, run_id=None, observations_path=None):
+    """读取状态与可选观察，输出只读恢复建议；不修改状态。"""
+    repo = Path(repo)
+    if run_id is not None:
+        state_path = run_state_path(repo, run_id)
+        if not state_path.is_file():
+            raise ValueError(f'run not found: {run_id}')
+    else:
+        run = latest_incomplete_run(repo)
+        if run is None:
+            raise ValueError('no incomplete run found')
+        run_id = run['runId']
+        state_path = Path(run['path'])
+
+    try:
+        state = read_state(state_path)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f'cannot read run {run_id}: {exc}') from exc
+    if not isinstance(state, dict):
+        raise ValueError(f'run {run_id} state must be a JSON object')
+
+    observations = {}
+    if observations_path is not None:
+        try:
+            observations = json.loads(
+                Path(observations_path).read_text(encoding='utf-8'))
+        except OSError as exc:
+            raise ValueError(f'cannot read observations: {exc}') from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'invalid observations JSON: {exc}') from exc
+        if not isinstance(observations, dict):
+            raise ValueError('observations JSON must be an object keyed by role#attempt')
+    return build_next_actions(state, observations)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Threadweave local helper (no host API calls, cleanup is dry-run)')
+        description='Threadweave local helper (no host API calls; recovery/cleanup are dry-run)')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('preflight')
@@ -112,6 +148,10 @@ def main(argv=None):
     p.add_argument('--repo', default='.')
     p.add_argument('--run', required=True)
     p.add_argument('--observations', required=True)
+    p = sub.add_parser('next')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--run')
+    p.add_argument('--observations')
     args = parser.parse_args(argv)
 
     if args.command == 'preflight':
@@ -124,6 +164,12 @@ def main(argv=None):
         result = inspect(args.repo)
     elif args.command == 'doctor':
         result = doctor(args.repo)
+    elif args.command == 'next':
+        try:
+            result = next_plan(args.repo, args.run, args.observations)
+        except ValueError as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            return 2
     else:
         result = cleanup_plan(args.repo, args.run, args.observations)
     print(json.dumps(result, ensure_ascii=False, indent=2))
