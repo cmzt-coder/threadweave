@@ -47,6 +47,18 @@ class HostAdapter(ABC):
     def archive_worktree(self, root):
         """归档 worktree。"""
 
+    def attach_worktree(self, path):
+        """重新附加既有 managed worktree；旧适配器保持拒绝。"""
+        raise NotImplementedError('attach_worktree')
+
+    def worktree_creation_status(self, operation_id):
+        """查询异步 worktree 操作；operationId 不是目录或 threadId。"""
+        raise NotImplementedError('worktree_creation_status')
+
+    def archive_thread(self, thread_id):
+        """归档明确指定的聊天，不代表已停止或已清理工作区。"""
+        raise NotImplementedError('archive_thread')
+
 
 class UnsupportedHostAdapter(HostAdapter):
     """默认拒绝实现；未接入真实宿主时所有调用都抛 NotImplementedError。"""

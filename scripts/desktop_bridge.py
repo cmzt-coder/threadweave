@@ -136,7 +136,8 @@ class BridgeJournal:
                     or not start['branchName'].strip()):
                 raise ValueError('existing baseline ref required; no implicit branch creation')
         else:
-            raise ValueError('unsupported bridge method')
+            from desktop_lifecycle_bridge import validate_lifecycle_params
+            validate_lifecycle_params(method, params)
 
     def _prepare(self, operation_id, role, attempt, task_revision, method, params):
         _segment(role)
@@ -171,6 +172,12 @@ class BridgeJournal:
     def prepare_send(self, operation_id, role, attempt, task_revision, thread_id, message):
         return self._prepare(operation_id, role, attempt, task_revision, SEND_METHOD, {
             'threadId': thread_id, 'hostId': 'local', 'prompt': message})
+
+    def prepare_lifecycle(self, operation_id, role, attempt, task_revision, method, params):
+        """准备等待/资源生命周期请求；实际执行仍由桌面 leader 完成。"""
+        from desktop_lifecycle_bridge import validate_lifecycle_params
+        validate_lifecycle_params(method, params)
+        return self._prepare(operation_id, role, attempt, task_revision, method, params)
 
     def inspect(self, operation_id):
         return self._read(self._path(operation_id))
@@ -230,7 +237,7 @@ class BridgeJournal:
                 identity = metadata.get('threadId', metadata.get('clientThreadId'))
                 if not isinstance(identity, str) or not identity.strip():
                     raise ValueError('creation identity required')
-            else:
+            elif method in (METHOD, SEND_METHOD):
                 if (set(metadata) != {'threadId', 'status', 'hostId'}
                         or metadata.get('threadId') != record['request']['params']['threadId']):
                     raise ValueError('response thread identity mismatch')
@@ -238,6 +245,9 @@ class BridgeJournal:
                     raise ValueError('thread status required')
                 if method == SEND_METHOD and metadata['status'] != 'accepted':
                     raise ValueError('send receipt only proves accepted, not task completion')
+            else:
+                from desktop_lifecycle_bridge import validate_lifecycle_metadata
+                validate_lifecycle_metadata(method, record['request']['params'], metadata)
         elif response.get('status') == 'failed':
             if not isinstance(response.get('error'), str) or not response['error']:
                 raise ValueError('failed response requires error')

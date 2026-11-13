@@ -656,6 +656,82 @@ class Controller:
             'timeoutSeconds': timeout_seconds,
         }
 
+    def confirm_stop_from_wait(self, role, attempt, observation, max_age_seconds=60):
+        """只从新鲜、同任务的真实等待回执确认停止，不从 timeout 推导停止。"""
+        worker = self._review_worker(role, attempt)
+        expected = {'runId': self.run_id, 'role': role, 'attempt': attempt,
+                    'taskRevision': worker.get('activityRevision', 0)}
+        if (not isinstance(observation, dict)
+                or any(observation.get(k) != v for k, v in expected.items())
+                or observation.get('source') != 'desktop_tool_bridge'):
+            raise ValueError('wait observation binding mismatch')
+        from desktop_lifecycle_bridge import validate_lifecycle_metadata, WAIT
+        metadata = observation.get('metadata', {})
+        validate_lifecycle_metadata(WAIT, {'targets': [{'threadId': worker['threadId']}]}, metadata)
+        if type(max_age_seconds) is not int or not 0 <= max_age_seconds <= 60:
+            raise ValueError('invalid wait evidence age limit')
+        try:
+            stamp = datetime.fromisoformat(observation['observedAt'].replace('Z', '+00:00'))
+            age = (datetime.now(timezone.utc) - stamp).total_seconds()
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError('invalid wait observation time') from exc
+        if not 0 <= age <= max_age_seconds:
+            raise ValueError('wait observation is stale or in the future')
+        polls = metadata['result']['polls']
+        poll = next((p for p in polls if p['thread']['id'] == worker['threadId']), None)
+        turn = (poll or {}).get('latestTurn') or {}
+        message = (poll or {}).get('latestAssistantMessage') or {}
+        report = worker.get('report', {})
+        # 宿主 wait 不携带 Threadweave taskRevision。仅给新回执贴版本标签，
+        # 无法排除其返回上一轮的 idle/final；最终消息必须回显当前已接收报告哈希。
+        report_sha = report.get('reportSha')
+        if (not poll or poll['thread']['status']['type'] != 'idle'
+                or turn.get('status') != 'completed' or message.get('phase') != 'final_answer'
+                or not isinstance(message.get('text'), str) or message.get('turnId') != turn.get('id')
+                or not turn.get('id') or worker['state'] != 'reported'
+                or report.get('taskRevision') != worker.get('activityRevision', 0)
+                or not isinstance(report_sha, str) or len(report_sha) != 64
+                or report_sha not in message['text']):
+            raise RuntimeError('wait receipt does not prove completed/idle final answer for current report')
+        snapshot = copy.deepcopy(self.state)
+        try:
+            return self.confirm_stop(role, attempt, idle=True, final_answer_present=True, no_active_turn=True)
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
+
+    def archive_worker_host(self, role, attempt):
+        """先确认已集成且停止，再经桥接归档聊天；queued 不推进本地生命周期。"""
+        worker = self._review_worker(role, attempt)
+        if worker['state'] not in ('integrated', 'archived'):
+            raise RuntimeError('host archive requires integrated worker')
+        self._require_stopped(worker)
+        if not self.state.get('authorization', {}).get('provenance'):
+            raise RuntimeError('authorization provenance missing; archive blocked')
+        expected = {'runId': self.run_id, 'role': role, 'attempt': attempt,
+                    'taskRevision': worker.get('activityRevision', 0)}
+        binding = self.adapter.dispatch_binding()
+        if any(binding.get(k) != v for k, v in expected.items()):
+            raise ValueError('archive adapter binding mismatch')
+        observation = self.adapter.archive_thread(worker['threadId'])
+        if (not isinstance(observation, dict)
+                or any(observation.get(k) != v for k, v in expected.items())
+                or observation.get('source') != 'desktop_tool_bridge'):
+            raise ValueError('archive observation binding mismatch')
+        from desktop_lifecycle_bridge import validate_lifecycle_metadata, ARCHIVE_THREAD
+        validate_lifecycle_metadata(ARCHIVE_THREAD, {'threadId': worker['threadId']}, observation.get('metadata', {}))
+        if worker['state'] == 'archived':
+            return observation
+        snapshot = copy.deepcopy(self.state)
+        try:
+            self.transition_worker(role, attempt, 'archived')
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
+        return observation
+
     def write_plan(self, plan, update_plan_available=None):
         """可选工具降级：有 update_plan 时返回工具名，否则写入 state 文件。"""
         if update_plan_available is None:
