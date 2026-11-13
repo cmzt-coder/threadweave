@@ -519,7 +519,10 @@
                 }
               },
               "selfReportedVerification": {
-                "type": "array"
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -538,7 +541,104 @@
             }
           },
           "acceptance": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "result",
+              "reportSha",
+              "worktree"
+            ],
+            "properties": {
+              "result": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "context",
+                  "planHash",
+                  "steps",
+                  "startedAt",
+                  "finishedAt"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ]
+                  },
+                  "context": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "runId",
+                      "role",
+                      "attempt",
+                      "taskRevision",
+                      "stage",
+                      "head"
+                    ],
+                    "properties": {
+                      "runId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "attempt": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "taskRevision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "stage": {
+                        "enum": [
+                          "worker",
+                          "integration"
+                        ]
+                      },
+                      "head": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    }
+                  },
+                  "planHash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "startedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "finishedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                }
+              },
+              "reportSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "worktree": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           },
           "verificationPlan": {
             "type": "object"
@@ -648,7 +748,85 @@
             ]
           },
           "acceptance": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "context",
+              "planHash",
+              "steps",
+              "startedAt",
+              "finishedAt"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "runId",
+                  "role",
+                  "attempt",
+                  "taskRevision",
+                  "stage",
+                  "head"
+                ],
+                "properties": {
+                  "runId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "taskRevision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "stage": {
+                    "enum": [
+                      "worker",
+                      "integration"
+                    ]
+                  },
+                  "head": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                }
+              },
+              "planHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "finishedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -838,7 +1016,85 @@
     "integrationRecovery": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "context",
+          "planHash",
+          "steps",
+          "startedAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "passed",
+              "failed"
+            ]
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "runId",
+              "role",
+              "attempt",
+              "taskRevision",
+              "stage",
+              "head"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "taskRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stage": {
+                "enum": [
+                  "worker",
+                  "integration"
+                ]
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              }
+            }
+          },
+          "planHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
       }
     }
   }

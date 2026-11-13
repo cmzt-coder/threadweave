@@ -632,7 +632,9 @@ with tempfile.TemporaryDirectory() as d:
     bad_sha_controller = Controller(FakeAdapter(), d, 'run-bad-sha', bad_sha_state)
     bad_sha_controller._observe_worker = fake_observation
     try:
-        bad_sha_controller.accept_report('a', 1, report_payload)
+        bad_payload = dict(report_payload, runId='run-bad-sha')
+        bad_payload['reportSha'] = report_hash(bad_payload)
+        bad_sha_controller.accept_report('a', 1, bad_payload)
         check('report-head-mismatch-rejected', False)
     except (RuntimeError, ValueError):
         check('report-head-mismatch-rejected', True)
@@ -644,7 +646,9 @@ with tempfile.TemporaryDirectory() as d:
     old_report_controller = Controller(FakeAdapter(), d, 'run-old-report', old_report_state)
     old_report_controller._observe_worker = fake_observation
     try:
-        old_report_controller.accept_report('a', 1, dict(report_payload, taskRevision=0))
+        old_payload = dict(report_payload, runId='run-old-report', taskRevision=0)
+        old_payload['reportSha'] = report_hash(old_payload)
+        old_report_controller.accept_report('a', 1, old_payload)
         check('old-report-rejected', False)
     except (RuntimeError, ValueError):
         check('old-report-rejected', True)

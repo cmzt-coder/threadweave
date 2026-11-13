@@ -80,3 +80,11 @@ Cleanup:
 - Heartbeat automation deleted: yes/no/n-a
 - Leader-created worktrees removed: yes/no/n-a
 ```
+
+## Local acceptance and scope evidence
+
+Record the exact run/role/attempt/taskRevision, worker HEAD, reportSha, planHash and worktree identity for each independent acceptance result. Worker self-reported tests are not acceptance. Before integration, verify the report and acceptance still match actual Git observations, then record beforeSha/afterSha and the independent integration-stage result.
+
+An unresolved integrationBlocked prevents later integrations and complete status; explicit recover_integration(plan) must reverify the current integration HEAD and retain the prior failure log. Old state files remain readable but their verification strings cannot satisfy the new gate.
+
+Record ownedPaths, scopeExceptions and serializedResources before dispatch. Include future paths and both rename endpoints in checks; absent declarations on old runs do not claim scope verification. maxReworkPerWorker defaults to 2; rejected attempts keep task state unchanged and are audited separately in the run's audit.jsonl.
