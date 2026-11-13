@@ -8,6 +8,8 @@ from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
+from report import report_hash
+from verify import plan_hash
 from controller import Controller, StaleStateError  # noqa: E402
 from host_adapter import HostAdapter, UnsupportedHostAdapter  # noqa: E402
 from state_store import InvalidTransition, StateLock, read_state, run_state_path  # noqa: E402
@@ -605,25 +607,34 @@ with tempfile.TemporaryDirectory() as d:
     report_state['workers'][0]['activityRevision'] = 1
     report_state['workers'][0]['branchTip'] = 'b' * 40
     report_controller = Controller(FakeAdapter(), d, 'run-report', report_state)
+    def fake_observation(worker):
+        return {'head': worker.get('branchTip', 'b' * 40), 'branch': worker['branch'],
+                'baseIsAncestor': True, 'filesChanged': ['a.py']}
+    report_controller._observe_worker = fake_observation
     report_payload = {
         'threadId': 't-a', 'branch': 'tw/a-1',
         'head': 'b' * 40, 'reportSha': 'c' * 64,
         'taskRevision': 1, 'baseIsAncestor': True,
+        'runId': 'run-report', 'role': 'a', 'attempt': 1,
+        'filesChanged': ['a.py'], 'testsRun': [], 'selfReportedVerification': [],
+        'contractChanges': [], 'knownRisks': [],
     }
+    report_payload['reportSha'] = report_hash(report_payload)
     report_controller.accept_report('a', 1, report_payload)
     report_saved = read_state(run_state_path(d, 'run-report'))
     check('accept-report-recorded', report_saved['workers'][0]['state'] == 'reported')
-    check('accept-report-sha', report_saved['workers'][0]['report']['reportSha'] == 'c' * 64)
+    check('accept-report-sha', report_saved['workers'][0]['report']['reportSha'] == report_payload['reportSha'])
 
     bad_sha_state = make_state('run-bad-sha')
     bad_sha_state['workers'][0]['state'] = 'running'
     bad_sha_state['workers'][0]['activityRevision'] = 1
     bad_sha_state['workers'][0]['branchTip'] = 'd' * 40
     bad_sha_controller = Controller(FakeAdapter(), d, 'run-bad-sha', bad_sha_state)
+    bad_sha_controller._observe_worker = fake_observation
     try:
         bad_sha_controller.accept_report('a', 1, report_payload)
         check('report-head-mismatch-rejected', False)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         check('report-head-mismatch-rejected', True)
 
     old_report_state = make_state('run-old-report')
@@ -631,13 +642,23 @@ with tempfile.TemporaryDirectory() as d:
     old_report_state['workers'][0]['activityRevision'] = 1
     old_report_state['workers'][0]['branchTip'] = 'b' * 40
     old_report_controller = Controller(FakeAdapter(), d, 'run-old-report', old_report_state)
+    old_report_controller._observe_worker = fake_observation
     try:
         old_report_controller.accept_report('a', 1, dict(report_payload, taskRevision=0))
         check('old-report-rejected', False)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         check('old-report-rejected', True)
 
-    report_controller.integrate('a', 1, 'e' * 40, 'tests passed')
+    plan = {'version': 1, 'steps': [{'id': 'test', 'argv': ['true'], 'timeoutSeconds': 1}]}
+    report_controller.confirm_stop('a', 1, True, True, True)
+    report_controller._integration_observation = lambda: (Path(d), 'e' * 40)
+    report_controller._git = lambda *args: ''
+    def fake_execute(plan, root, context):
+        return {'status': 'passed', 'context': context, 'planHash': plan_hash(plan),
+                'steps': [], 'startedAt': NOW, 'finishedAt': NOW}
+    with patch('verify.execute_plan', side_effect=fake_execute):
+        report_controller.verify_worker('a', 1, plan)
+        report_controller.integrate('a', 1, 'e' * 40, plan=plan)
     integrated_saved = read_state(run_state_path(d, 'run-report'))
     check('integrate-worker-state', integrated_saved['workers'][0]['state'] == 'integrated')
     check('integration-log-recorded',
@@ -660,9 +681,20 @@ with tempfile.TemporaryDirectory() as d:
     fail_integration_state['workers'][0]['branchTip'] = 'b' * 40
     fail_integration_controller = Controller(
         FakeAdapter(), d, 'run-fail-integration', fail_integration_state)
-    fail_integration_controller.accept_report('a', 1, report_payload)
+    fail_integration_controller._observe_worker = fake_observation
+    failure_report = dict(report_payload, runId='run-fail-integration')
+    failure_report['reportSha'] = report_hash(failure_report)
+    fail_integration_controller.accept_report('a', 1, failure_report)
+    fail_integration_controller.confirm_stop('a', 1, True, True, True)
+    fail_integration_controller._integration_observation = lambda: (Path(d), 'e' * 40)
+    fail_integration_controller._git = lambda *args: ''
+    with patch('verify.execute_plan', side_effect=fake_execute):
+        fail_integration_controller.verify_worker('a', 1, plan)
     try:
-        fail_integration_controller.integrate('a', 1, None, 'FAIL: tests failed')
+        def failed_execute(plan, root, context):
+            return dict(fake_execute(plan, root, context), status='failed')
+        with patch('verify.execute_plan', side_effect=failed_execute):
+            fail_integration_controller.integrate('a', 1, 'e' * 40, plan=plan)
         check('integration-failure-raised', False)
     except RuntimeError:
         check('integration-failure-raised', True)

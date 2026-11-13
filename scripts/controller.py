@@ -103,6 +103,10 @@ class Controller:
                 raise RuntimeError('cannot integrate without accepted report')
             if not any(
                 entry.get('branch') == worker.get('branch') and entry.get('result') == 'merged'
+                and entry.get('acceptance', {}).get('status') == 'passed'
+                and entry.get('acceptance', {}).get('context', {}).get('role') == role
+                and entry.get('acceptance', {}).get('context', {}).get('attempt') == attempt
+                and entry.get('acceptance', {}).get('context', {}).get('taskRevision') == worker.get('activityRevision', 0)
                 for entry in self.state.get('integrationLog', [])
             ):
                 raise RuntimeError('cannot integrate without integration log')
@@ -329,6 +333,9 @@ class Controller:
         self._require_stopped(worker)
         observed = self._observe_worker(worker)
         report = worker['report']
+        from report import validate_report
+        validate_report(report, {**self._context(worker, 'worker', observed['head']),
+                                'threadId': worker.get('threadId'), 'branch': worker['branch']}, observed)
         if (report['head'] != observed['head'] or
                 report['taskRevision'] != worker.get('activityRevision', 0)):
             raise RuntimeError('report evidence is stale')
@@ -375,6 +382,9 @@ class Controller:
         acceptance = worker.get('acceptance', {})
         result = acceptance.get('result', {})
         report = worker['report']
+        from report import validate_report
+        validate_report(report, {**self._context(worker, 'worker', observed['head']),
+                                'threadId': worker.get('threadId'), 'branch': worker['branch']}, observed)
         if (result.get('status') != 'passed' or
                 result.get('context') != self._context(worker, 'worker', observed['head']) or
                 result.get('planHash') != plan_hash(worker.get('verificationPlan', {})) or
@@ -411,6 +421,7 @@ class Controller:
         worker = self._review_worker(blocked['role'], blocked['attempt'])
         self._require_stopped(worker)
         root, head = self._integration_observation()
+        self._git(root, 'merge-base', '--is-ancestor', self.state['integration']['baseSha'], head)
         result = execute_plan(plan, root, self._context(worker, 'integration', head))
         self.state.setdefault('integrationRecovery', []).append(result)
         if result['status'] != 'passed':
@@ -458,7 +469,7 @@ class Controller:
             worker['reworkCount'] = count + 1
             worker['reworkNotes'] = notes
             worker['activityRevision'] = worker.get('activityRevision', 0) + 1
-            for key in ('stopStatus', 'stopActivityRevision', 'report', 'acceptance', 'verificationPlan'):
+            for key in ('stopStatus', 'stopActivityRevision', 'report', 'acceptance', 'verificationPlan', 'branchTip'):
                 worker.pop(key, None)
             self.transition_worker(role, attempt, 'running')
         except Exception:
