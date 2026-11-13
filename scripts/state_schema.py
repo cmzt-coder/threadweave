@@ -76,6 +76,15 @@ def validate_invariants(state):
     identities = [(w.get('role'), w.get('attempt')) for w in workers]
     if len(identities) != len(set(identities)):
         errors.append('duplicate worker role/attempt')
+    for worker in workers:
+        observed = worker.get('hostObservation')
+        if observed is not None and (
+            observed.get('runId') != state.get('runId')
+            or observed.get('role') != worker.get('role')
+            or observed.get('attempt') != worker.get('attempt')
+            or observed.get('metadata', {}).get('threadId') != worker.get('threadId')
+        ):
+            errors.append('host observation identity mismatch')
     if state.get('status') == 'complete':
         if state.get('integrationBlocked'):
             errors.append('complete run cannot have unresolved integration failure')

@@ -537,6 +537,34 @@ class Controller:
             'recordedAt': _now_iso(),
         }
 
+    def observe_worker_host(self, role, attempt):
+        """保存桥接只读观察；不推进 worker 状态，不生成停止或验收证据。"""
+        if self.state.get('runId') != self.run_id:
+            raise ValueError('state runId does not match controller run_id')
+        worker = self._worker(role, attempt)
+        if not worker.get('threadId'):
+            raise ValueError('registered threadId required')
+        observation = self.adapter.read_thread(worker['threadId'])
+        expected = {'runId': self.run_id, 'role': role, 'attempt': attempt,
+                    'taskRevision': worker.get('activityRevision', 0)}
+        if (not isinstance(observation, dict)
+                or any(observation.get(k) != v for k, v in expected.items())
+                or not isinstance(observation.get('metadata'), dict)
+                or observation['metadata'].get('threadId') != worker['threadId']
+                or observation.get('source') != 'desktop_tool_bridge'):
+            raise ValueError('host observation binding mismatch')
+        if worker.get('hostObservation') == observation:
+            return copy.deepcopy(observation)
+        before = copy.deepcopy(self.state)
+        worker['hostObservation'] = copy.deepcopy(observation)
+        try:
+            self.save()
+        except Exception:
+            self.state.clear()
+            self.state.update(before)
+            raise
+        return copy.deepcopy(observation)
+
     def record_capabilities(self):
         self.state['hostCapabilities'] = self.capability_snapshot()
         self.save()

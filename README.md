@@ -137,6 +137,10 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 
 See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols, templates and local helper modules. Independent acceptance plans, structured report validation and write-set reservation are local helpers, not host guarantees: a branch or merge without an executed acceptance plan is recorded as unverified, never as passed, and a failed integration acceptance blocks later integrations until the leader re-verifies the current integration HEAD. Local Git and fake-adapter checks do not replace a real-thread smoke test.
 
+## Desktop host bridge (read-only stage)
+
+The first desktop bridge stage supports persisted `read_thread` requests, explicit leader execution and correlated result import through `DesktopBridgeAdapter`. The controller saves minimal historical observations and derives a Markdown state view. It does not connect to private sockets or automatically create, message or clean up workers. A real read-only round trip has passed; the full host workflow remains pending. See the [bridge guide and validation evidence](docs/真实宿主桥接接入与验收指南.md).
+
 ## Local tests
 
 Run all local smoke suites:

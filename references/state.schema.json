@@ -642,6 +642,86 @@
           },
           "verificationPlan": {
             "type": "object"
+          },
+          "hostObservation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "runId",
+              "role",
+              "attempt",
+              "taskRevision",
+              "operationId",
+              "source",
+              "observedAt",
+              "requestSha",
+              "responseSha",
+              "toolResultSha",
+              "metadata"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "taskRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "operationId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "const": "desktop_tool_bridge"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "requestSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "responseSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "toolResultSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "threadId",
+                  "hostId",
+                  "status"
+                ],
+                "properties": {
+                  "threadId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hostId": {
+                    "const": "local"
+                  },
+                  "status": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
           }
         }
       }
