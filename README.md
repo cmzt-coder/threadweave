@@ -51,6 +51,14 @@ Direct execution wins when the split would yield only one or two small subtasks,
 
 Calibration, straight from the skill: a **good split** is one worker on an API endpoint, one on the frontend page consuming it, one on the migration and seed data — files barely overlap and the one shared contract (the API schema) is fixed by the leader up front. A **bad split** is three workers refactoring the same core module — merge and review cost erases the parallel gain.
 
+Splitting is decided by three tests, not by counting components:
+
+- **Write sets.** If two candidates would touch the same path — including generated files, lockfiles, migration ordering, shared config — they are not parallel. Give each a disjoint set, make one the sole owner and serialize the rest, or keep the work in one thread.
+- **Stable contracts.** Freeze anything that must not move mid-run — API schema, types, migration numbering, shared fixtures, CI config — before dispatch, with at most one writer. Everyone else treats it as read-only and comes back to the leader if it has to change.
+- **Shared mutable state.** Concurrent writes to one non-splittable tree, database, running server or generated artifact need a single writer: serialize the steps, or have the leader produce that state once after integration. There is no shared-workspace mode.
+
+A backend endpoint, the frontend page consuming it, and the migration remain a good split **when the API schema is frozen first** — three isolated worktrees, integrated serially. Shipping frontend and backend in one change does not require a shared directory. Implementation plus a read-only review splits fine; implementation plus review that must edit the same files does not. Two workers on the same lockfile or the same migration sequence do not split at all.
+
 ## Quick start
 
 Prerequisites: Codex with real thread tools, Git, and the target repository registered as a Codex project.
@@ -127,7 +135,8 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 
 ## First iteration and validation
 
-See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols and templates, not an executable controller; local Git checks do not replace a real-thread smoke test.
+See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols, templates and local helper modules. Independent acceptance plans, structured report validation and write-set reservation are local helpers, not host guarantees: a run that has not wired them records results as unverified rather than passed. Local Git and fake-adapter checks do not replace a real-thread smoke test.
+
 ## Local tests
 
 Run all local smoke suites:
@@ -136,9 +145,9 @@ Run all local smoke suites:
 python3 tests/run_all.py
 ```
 
-This runs 12 suites and currently passes 188 assertions. These checks cover local Git
-primitives, schema/state logic and fake-adapter controller logic; they do not replace a
-real worker smoke test.
+This runs every `tests/*_smoke.py` suite and prints a JSON summary (`passed` plus the
+checks that ran) for each. These checks cover local Git primitives, schema/state logic and
+fake-adapter controller logic; they do not replace a real worker smoke test.
 
 ## Project origin
 

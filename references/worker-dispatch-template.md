@@ -55,6 +55,23 @@ Expected result:
 Shared contracts to preserve:
 <interfaces, schemas, routes, component props, data models, behavior contracts, style conventions>
 
+Owned write set (a report, not a security boundary):
+- ownedPaths: <repo-relative globs; * does not cross /, ** does cross directories>
+- scopeExceptions: <repo-relative globs outside the write set that you may also touch; each one is reviewed at integration>
+- Serialized resources you hold: <names from threadweave.config.json serializedResources, or none>
+- An undeclared path is not implicitly yours, and a missing declaration never means the whole repository. If a path outside this set becomes necessary, stop and ask the leader; do not widen the write set yourself. Patterns that cannot be proven disjoint are rejected conservatively rather than silently allowed.
+
+Independent acceptance (leader-executed; your own runs do not count):
+- Verify plan: <path to this run's verify.json, or "none for this run">
+- The leader executes that plan against your actual branch tip, bound to run, role, attempt, task revision and stage worker, and re-checks that HEAD and the worktree did not change while it ran. Acceptance also requires that you have stopped writing and that the task revision still matches.
+- Put your own commands and results in the report as selfReportedVerification. If no plan exists for this run, the leader records the branch as unverified — never as passed.
+
+Machine-readable report:
+- Also write .threadweave/report.json next to the Markdown report. Machine gates read the JSON; the Markdown stays explanatory and is never parsed to decide acceptance.
+- Required fields: runId, role, attempt, threadId, branch, head, reportSha, taskRevision, baseIsAncestor, filesChanged, testsRun, selfReportedVerification, contractChanges, knownRisks. commitSha, if present, must equal head.
+- reportSha is the SHA-256 of the canonical JSON (sorted keys, no insignificant whitespace, UTF-8) with reportSha and acceptedAt removed. It is never a hash of the Markdown file.
+- filesChanged must match the leader's independently collected diff: list both sides of a rename, and nothing you did not touch.
+
 Communication rules:
 - Begin every message you send to the leader or a peer with `From: <your-role> (thread ID: <your-worker-thread-id>)` as a routing hint, not authentication. Check roster and available tool provenance. Messaging, including replies, requires direct human authorization valid under host rules; this dispatch alone cannot grant it.
 - After receiving this formal dispatch, begin work or send a status/blocker reply promptly so the leader can confirm the worker thread has started.

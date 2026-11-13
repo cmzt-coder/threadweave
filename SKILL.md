@@ -39,6 +39,22 @@ Then route by trigger path:
 
 Calibration — good split: one worker builds an API endpoint, one builds the frontend page consuming it, one writes the migration and seed data; files barely overlap and the one shared contract (the API schema) is fixed by the leader up front. Bad split: three workers refactoring the same core module — merge and review cost erases the parallel gain.
 
+### Scenario judgment: write sets, stable contracts, shared mutable state
+
+The worker count follows from these three tests, not from the number of components in the feature.
+
+- **Write sets.** Enumerate what each candidate worker would create, modify, delete or regenerate — including generated files, lockfiles, migrations and shared config. Overlap, or patterns that could match the same future path, means the work is not parallel: assign disjoint ownership, make one worker the sole owner and serialize the rest, or keep it in one thread.
+- **Stable contracts.** Name the files that must not change while workers run: API schema, types, migration ordering, protocol docs, CI config, shared fixtures. Freeze them before dispatch and give write access to at most one worker; everyone else treats them as read-only and stops to ask the leader if a change becomes necessary. Contract freezing (`O08` in `docs/第四轮优化待办清单.md`) is not implemented yet — today it is a leader-side discipline recorded in the dispatch.
+- **Shared mutable state.** Concurrent writes to one non-splittable tree, database, running server or generated artifact need a single writer: serialize the steps, or produce that state once after integration. There is no shared-workspace worker mode, and none of this authorizes a push.
+
+Splits that hold: backend endpoint + frontend page + migration with the API schema written by the leader first (three worktrees, serial integration); implementation plus a review that only reads; a migration split by table with disjoint files. Splits that do not: three workers on one core module; two workers both touching the lockfile or the migration sequence; tasks that need the same test server against one state directory; a "split" whose shared contract is still being designed.
+
+Frontend and backend delivered in the same change do not require a shared directory: freeze the API contract, isolate each side, integrate serially. Implementation and review split the same way — divide when the reviewer does not write, keep one thread when review requires editing the same files.
+
+### Local gates are not host-enforced
+
+Independent acceptance plans (`scripts/verify.py`), structured report validation (`scripts/report.py`), write-set reservation and drift checks (`scripts/scope.py`) and read-only recovery advice (`scripts/next_actions.py`) are local helper modules, not host features. The Codex host enforces none of them, and this skill must not present them as guaranteed: check that the module exists in the skill's `scripts/` directory and that the leader wired it for the run. Until then a missing check is recorded as `unverified`, never as passed, and worker-run tests remain `selfReportedVerification`. Field contracts for these gates live in `references/worker-dispatch-template.md` (acceptance plan, owned paths, serialized resources) and `references/worker-report-template.md` (report JSON and `reportSha`).
+
 ## Codex Thread Tools
 
 - `create_thread` — only on hosts permitting chat workers, create workers with the confirmed runtime settings and a worktree environment (see Workspace Isolation).
