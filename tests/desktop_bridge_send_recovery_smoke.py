@@ -359,4 +359,144 @@ with tempfile.TemporaryDirectory() as root:
           unknown_adapter.journal._path('unknown-send').read_bytes()
           == reconciled_journal_bytes)
 
+    # 4. 已完成 receipt 的 taskRevision 不能跨任务复用；新 operationId 才能
+    #    绑定返工后的 taskRevision。所有记录仍是本地 fixture。
+    td = str(Path(root) / 'revision-binding-case')
+    old_revision_adapter = make_adapter(
+        td, 'revision-bound-send', task_revision=0)
+    rejects('old-revision-send-queues', BridgePending,
+            lambda: old_revision_adapter.send_message(
+                THREAD_ID, 'fixture old revision task'))
+    old_revision_claim = old_revision_adapter.journal.claim(
+        'revision-bound-send')
+    old_revision_adapter.journal.complete(
+        'revision-bound-send', receipt(old_revision_claim, {
+            'threadId': THREAD_ID, 'hostId': 'local', 'status': 'accepted'}))
+    old_revision_record = old_revision_adapter.journal.inspect(
+        'revision-bound-send')
+    old_revision_journal_bytes = old_revision_adapter.journal._path(
+        'revision-bound-send').read_bytes()
+    check('old-receipt-bound-to-task-revision-zero',
+          old_revision_record['request']['binding']['taskRevision'] == 0
+          and old_revision_record['status'] == 'succeeded')
+
+    new_revision_adapter = make_adapter(
+        td, 'revision-bound-send', task_revision=1)
+    rejects('old-receipt-cannot-satisfy-new-task-revision', ValueError,
+            lambda: new_revision_adapter.completed_message(
+                THREAD_ID, 'fixture old revision task'))
+    check('old-receipt-mismatch-preserves-durable-journal',
+          new_revision_adapter.journal._path('revision-bound-send').read_bytes()
+          == old_revision_journal_bytes)
+    rejects('old-operation-cannot-be-rebound-to-new-task-revision', ValueError,
+            lambda: new_revision_adapter.send_message(
+                THREAD_ID, 'fixture old revision task'))
+    check('old-operation-rebind-leaves-durable-journal-unchanged',
+          new_revision_adapter.journal._path('revision-bound-send').read_bytes()
+          == old_revision_journal_bytes)
+
+    fresh_revision_adapter = make_adapter(
+        td, 'revision-bound-new', task_revision=1)
+    rejects('new-operation-queues-at-task-revision-one', BridgePending,
+            lambda: fresh_revision_adapter.send_message(
+                THREAD_ID, 'fixture old revision task'))
+    fresh_record = fresh_revision_adapter.journal.inspect('revision-bound-new')
+    check('new-operation-binds-exactly-new-task-revision',
+          fresh_record['request']['binding']['taskRevision'] == 1
+          and fresh_record['status'] == 'pending')
+    fresh_claim = fresh_revision_adapter.journal.claim('revision-bound-new')
+    fresh_revision_adapter.journal.complete(
+        'revision-bound-new', receipt(fresh_claim, {
+            'threadId': THREAD_ID, 'hostId': 'local', 'status': 'accepted'}))
+    check('new-operation-reads-new-task-revision-receipt',
+          fresh_revision_adapter.completed_message(
+              THREAD_ID, 'fixture old revision task')['status'] == 'accepted')
+
+    # 5. 返工使旧证据失效；旧 pending dispatch intent 的已接受 receipt
+    #    不能在 running worker 上恢复成 dispatched。fixture-only，非真实宿主证据。
+    td = str(Path(root) / 'rework-case')
+    stale_dispatch_adapter = make_adapter(
+        td, 'rework-old-dispatch', task_revision=0)
+    rejects('rework-stale-dispatch-queues', BridgePending,
+            lambda: stale_dispatch_adapter.send_message(
+                THREAD_ID, 'fixture stale dispatch'))
+    stale_claim = stale_dispatch_adapter.journal.claim('rework-old-dispatch')
+    stale_dispatch_adapter.journal.complete(
+        'rework-old-dispatch', receipt(stale_claim, {
+            'threadId': THREAD_ID, 'hostId': 'local', 'status': 'accepted'}))
+    stale_record = stale_dispatch_adapter.journal.inspect('rework-old-dispatch')
+    stale_dispatch_bytes = stale_dispatch_adapter.journal._path(
+        'rework-old-dispatch').read_bytes()
+    check('rework-old-dispatch-receipt-bound-task-revision-zero',
+          stale_record['status'] == 'succeeded'
+          and stale_record['request']['binding']['taskRevision'] == 0)
+
+    rework_state = make_state()
+    rework_worker = worker_from(rework_state)
+    rework_worker.update(
+        state='reported', activityRevision=0, reworkCount=0,
+        branchTip=BASE_SHA,
+        report={
+            'threadId': THREAD_ID, 'branch': 'fixture-branch', 'head': BASE_SHA,
+            'reportSha': 'b' * 64, 'taskRevision': 0, 'baseIsAncestor': True,
+            'acceptedAt': now(),
+        },
+        acceptance={
+            'result': {
+                'status': 'passed',
+                'context': {
+                    'runId': RUN_ID, 'role': ROLE, 'attempt': ATTEMPT,
+                    'taskRevision': 0, 'stage': 'worker', 'head': BASE_SHA,
+                },
+                'planHash': 'c' * 64, 'steps': [], 'startedAt': now(),
+                'finishedAt': now(),
+            },
+            'reportSha': 'b' * 64, 'worktree': WORKTREE,
+        },
+        verificationPlan={'fixture': 'old plan'},
+        stopStatus='confirmed', stopActivityRevision=0,
+        dispatchIntent={
+            'dispatchId': 'fixture-old-dispatch', 'message': 'fixture stale dispatch',
+            'at': now(), 'result': 'pending',
+            'bridgeOperationId': 'rework-old-dispatch',
+        })
+    rework_path = run_state_path(td, RUN_ID)
+    rework_controller = Controller(
+        stale_dispatch_adapter, td, RUN_ID, rework_state)
+    rework_controller.rework(ROLE, ATTEMPT, notes='fixture rework')
+    reworked = read_state(rework_path)
+    reworked_worker = worker_from(reworked)
+    cleared_keys = ('stopStatus', 'stopActivityRevision', 'report', 'acceptance',
+                    'verificationPlan', 'branchTip')
+    check('rework-clears-old-report-acceptance-stop-evidence',
+          not any(key in reworked_worker for key in cleared_keys))
+    check('rework-starts-new-running-task-revision',
+          reworked_worker['state'] == 'running'
+          and reworked_worker['activityRevision'] == 1
+          and reworked_worker['reworkCount'] == 1)
+    check('old-pending-dispatch-intent-survives-rework',
+          reworked_worker['dispatchIntent']['result'] == 'pending'
+          and reworked_worker['dispatchIntent']['bridgeOperationId']
+          == 'rework-old-dispatch')
+
+    rework_resume_controller = Controller(
+        make_adapter(td, 'rework-old-dispatch', task_revision=0),
+        td, RUN_ID, read_state(rework_path))
+    rework_state_bytes = rework_path.read_bytes()
+    with patch.object(rework_resume_controller.adapter, 'send_message',
+                      side_effect=AssertionError('must not resend old dispatch')):
+        rejects('old-pending-receipt-cannot-resume-reworked-worker', RuntimeError,
+                lambda: rework_resume_controller.resume_bridge_dispatch(
+                    ROLE, ATTEMPT))
+    post_resume = read_state(rework_path)
+    check('old-pending-receipt-does-not-rewrite-reworked-state',
+          post_resume == reworked
+          and rework_path.read_bytes() == rework_state_bytes)
+    check('old-pending-receipt-leaves-worker-running',
+          worker_from(post_resume)['state'] == 'running'
+          and worker_from(post_resume)['activityRevision'] == 1)
+    check('old-pending-receipt-does-not-rewrite-journal',
+          rework_resume_controller.adapter.journal._path(
+              'rework-old-dispatch').read_bytes() == stale_dispatch_bytes)
+
 print(json.dumps({'passed': len(checks), 'checks': checks}, ensure_ascii=False))
