@@ -185,8 +185,8 @@ empty_block_plan = build_next_actions(
     ),
     {'a#1': recovery_observation(healthy)},
 )
-check('empty-integration-block-object-detected',
-      any(a['action'] == 'recover_integration' for a in empty_block_plan['actions']))
+check('empty-block-matches-controller-falsy-semantics',
+      all(a['action'] != 'recover_integration' for a in empty_block_plan['actions']))
 
 resolved_block_plan = build_next_actions(
     state_with(
@@ -195,8 +195,8 @@ resolved_block_plan = build_next_actions(
     ),
     {'a#1': recovery_observation(healthy)},
 )
-check('resolved-integration-block-not-active',
-      all(a['action'] != 'recover_integration' for a in resolved_block_plan['actions']))
+check('resolved-label-cannot-clear-controller-block',
+      any(a['action'] == 'recover_integration' for a in resolved_block_plan['actions']))
 
 blocked_pending = build_next_actions(
     state_with(
@@ -463,6 +463,24 @@ with tempfile.TemporaryDirectory(prefix='threadweave-next-') as d:
         rc = main(['next', '--repo', str(repo), '--run', 'run-array'])
     check('cli-array-state-nonzero', rc == 2)
     check('cli-array-state-error', 'must be a JSON object' in stderr.getvalue())
+
+for marker in ({'resolved': True}, {'status': 'passed'}, {'blocked': False}):
+    actions = build_next_actions({'runId':'blocked', 'status':'observing',
+                                 'workers':[], 'integrationBlocked':marker})['actions']
+    check('truthy-block-cannot-self-clear-' + str(marker),
+          any(a['action']=='recover_integration' for a in actions))
+try:
+    build_next_actions({'status':'complete', 'cleanup':{'status':'complete'},
+                        'workers':[], 'integrationBlocked':{'role':'a'}})
+except ValueError:
+    check('contradictory-complete-block-rejected', True)
+else:
+    raise AssertionError('complete concealed unresolved block')
+with tempfile.TemporaryDirectory() as td:
+    write_state_atomic(run_state_path(td,'expected'), {'runId':'different','workers':[]})
+    try: next_plan(td,'expected')
+    except ValueError as exc: check('cli-rejects-run-identity-mismatch', 'identity mismatch' in str(exc))
+    else: raise AssertionError('run identity mismatch accepted')
 
 print(json.dumps({
     'passed': len(results),

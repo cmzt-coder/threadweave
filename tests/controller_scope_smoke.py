@@ -60,4 +60,12 @@ with tempfile.TemporaryDirectory() as td:
     try:Controller._scope_changes(c.state['workers'][0],{'filesChanged':['secret.txt']})
     except RuntimeError as exc:check('actual-drift-blocked','scope_drift' in str(exc))
     else:raise AssertionError('scope drift bypassed')
+    # 派发后新增的符号链接也必须在验收阶段重新检查。
+    c.state['workers'][0]['ownedPaths']=['src/**']
+    (wt/'src').mkdir()
+    (wt/'src/link').symlink_to(Path(td)/'outside')
+    git(wt,'add','src/link');git(wt,'commit','-m','add escaping link')
+    try:Controller._scope_changes(c.state['workers'][0],{'filesChanged':['src/link']})
+    except RuntimeError as exc:check('post-dispatch-symlink-blocked','scope_drift' in str(exc))
+    else:raise AssertionError('new symlink bypassed')
 print(json.dumps({'passed':len(results),'checks':results},ensure_ascii=False))

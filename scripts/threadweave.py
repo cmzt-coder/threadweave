@@ -116,6 +116,8 @@ def next_plan(repo, run_id=None, observations_path=None):
         raise ValueError(f'cannot read run {run_id}: {exc}') from exc
     if not isinstance(state, dict):
         raise ValueError(f'run {run_id} state must be a JSON object')
+    if state.get('runId') != run_id:
+        raise ValueError(f'run identity mismatch: expected {run_id}')
 
     observations = {}
     if observations_path is not None:

@@ -77,18 +77,11 @@ def _unique(items):
 def _integration_block(state):
     """读取 O01 的 integrationBlocked；兼容布尔值与对象两种持久化形态。"""
     value = state.get('integrationBlocked')
-    if value is False or value is None:
+    if not value:
         return None
-    if value is True:
-        return {'blocked': True}
     if isinstance(value, dict):
-        if value.get('resolved') is True or value.get('blocked') is False:
-            return None
-        status = str(value.get('status', '')).lower()
-        if status in ('resolved', 'cleared', 'recovered', 'complete', 'passed', 'ok'):
-            return None
-        return dict(value) if value else {'blocked': True}
-    return {'value': value}
+        return dict(value)
+    return {'blocked': True, 'value': value}
 
 
 def _parse_time(value):
@@ -597,6 +590,9 @@ def build_next_actions(state, observations=None):
         plan_state, recovery_observations, replacement_limit=replacement_limit)
     cleanup_plan = build_cleanup_plan(plan_state, cleanup_observations)
 
+    integration_block = _integration_block(state)
+    if run_status == 'complete' and integration_block:
+        raise ValueError('complete run has unresolved integrationBlocked')
     if run_status == 'complete' and cleanup_status == 'complete':
         return {
             'runId': state.get('runId'),

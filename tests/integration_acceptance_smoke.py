@@ -331,6 +331,10 @@ with tempfile.TemporaryDirectory(prefix='tw-reg-block-') as root:
           any(entry.get('result') == 'failed'
               for entry in saved.get('integrationLog', [])))
 
+    expect_failure('direct-transition-cannot-bypass-block',
+                   lambda: controller.transition_worker('a', 1, 'integrated'),
+                   needles=['blocked'])
+
     head_before_b = head(repo)
     expect_failure(
         'b-integration-blocked-after-a-failure',
@@ -366,6 +370,17 @@ with tempfile.TemporaryDirectory(prefix='tw-reg-block-') as root:
     recovered.integrate('b', 1, merge_b, plan=pass_plan())
     check('b-integrates-after-explicit-reverify',
           worker_state(state_path, 'b') == 'integrated')
+    # 历史通过日志不能代表当前 HEAD，跨 run 的记录不能充当本轮证据。
+    worker_by_role(recovered.state, 'b')['state'] = 'reported'
+    last = recovered.state['integrationLog'][-1]
+    last['acceptance']['context']['runId'] = 'another-run'
+    expect_failure('direct-transition-rejects-wrong-run-log',
+                   lambda: recovered.transition_worker('b', 1, 'integrated'))
+    last['acceptance']['context']['runId'] = run_id
+    commit_file(repo, 'later.txt', 'later\n', 'advance integration')
+    expect_failure('direct-transition-rejects-stale-head-log',
+                   lambda: recovered.transition_worker('b', 1, 'integrated'))
+
 
 
 # ---------------------------------------------------------------------------

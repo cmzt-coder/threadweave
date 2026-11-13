@@ -99,10 +99,17 @@ class Controller:
         worker = self._worker(role, attempt)
         validate_transition('worker', worker['state'], new_status)
         if new_status == 'integrated':
+            worker = self._review_worker(role, attempt)
+            if self.state.get('integrationBlocked'):
+                raise RuntimeError('integration blocked; explicit recovery required')
+            self._require_stopped(worker)
             if not worker.get('report'):
                 raise RuntimeError('cannot integrate without accepted report')
+            _, current_head = self._integration_observation()
             if not any(
-                entry.get('branch') == worker.get('branch') and entry.get('result') == 'merged'
+                entry.get('mergeCommit') == current_head
+                and entry.get('acceptance', {}).get('context') == self._context(worker, 'integration', current_head)
+                and entry.get('branch') == worker.get('branch') and entry.get('result') == 'merged'
                 and entry.get('acceptance', {}).get('status') == 'passed'
                 and entry.get('acceptance', {}).get('context', {}).get('role') == role
                 and entry.get('acceptance', {}).get('context', {}).get('attempt') == attempt
@@ -276,8 +283,9 @@ class Controller:
     def _scope_changes(worker, observed):
         if 'ownedPaths' not in worker:
             return
-        from scope import check_changes
-        errors = check_changes(observed['filesChanged'], worker['ownedPaths'],
+        from scope import check_changes, check_reservations
+        errors = check_reservations([worker], worker.get("worktree"))
+        errors += check_changes(observed['filesChanged'], worker['ownedPaths'],
                                worker.get('scopeExceptions', []))
         if errors:
             raise RuntimeError('scope_drift: ' + '; '.join(errors))
