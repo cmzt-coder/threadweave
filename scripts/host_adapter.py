@@ -5,6 +5,10 @@
 from abc import ABC, abstractmethod
 
 
+class HostActionPending(RuntimeError):
+    """外部动作尚未取得结果；排队等待不能当作调用失败或成功。"""
+
+
 class HostAdapter(ABC):
     """控制器依赖的宿主能力接口。"""
 

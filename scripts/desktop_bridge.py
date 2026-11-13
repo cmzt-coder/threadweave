@@ -1,6 +1,6 @@
 """桌面 leader 工具桥接：持久请求、显式领取、真实结果回填。
 
-第一阶段仅支持 read_thread。Python 不连接桌面私有 socket，也不直接调用
+支持 read_thread 与显式配置的创建/消息请求。Python 不连接桌面私有 socket，也不直接调用
 Codex 工具；leader 执行领取的请求，再提供带关联信息的结果。哈希与领取令牌
 防止误关联，不证明回填者身份或服务端签名。所有外部结果仍需 leader 审核。
 """
@@ -13,11 +13,13 @@ from pathlib import Path
 import re
 import uuid
 
-from host_adapter import UnsupportedHostAdapter
+from host_adapter import HostActionPending, UnsupportedHostAdapter
 from state_store import StateError, StateLock, read_state, run_state_dir, run_state_path, write_state_atomic
 
 
 METHOD = 'mcp__codex_app__read_thread'
+CREATE_METHOD = 'mcp__codex_app__create_thread'
+SEND_METHOD = 'mcp__codex_app__send_message_to_thread'
 SEGMENT = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
 
 
@@ -36,7 +38,7 @@ def _segment(value):
     return value
 
 
-class BridgePending(RuntimeError):
+class BridgePending(HostActionPending):
     """请求已持久化，等待 leader 领取/回填；不能当作工具调用已成功。"""
 
 
@@ -77,17 +79,10 @@ class BridgeJournal:
                 or type(binding.get('taskRevision')) is not int or binding['taskRevision'] < 0):
             raise ValueError('invalid request binding')
         _segment(binding.get('role'))
-        if (request.get('method') != METHOD
+        if (set(request) != {'method', 'binding', 'params'}
                 or value.get('requestSha') != digest(request)):
             raise ValueError('bridge request hash/method mismatch')
-        params = request.get('params', {})
-        if not isinstance(params, dict):
-            raise ValueError('bridge parameters must be an object')
-        expected = {'threadId': params.get('threadId'), 'hostId': 'local',
-                    'turnLimit': 1, 'includeOutputs': False,
-                    'maxOutputCharsPerItem': 400}
-        if not isinstance(params.get('threadId'), str) or not params['threadId'] or params != expected:
-            raise ValueError('invalid read-only bridge parameters')
+        self._validate_params(request['method'], request['params'])
         if value.get('status') not in ('pending', 'in_flight', 'unknown', 'succeeded', 'failed'):
             raise ValueError('invalid bridge status')
         if value['status'] in ('succeeded', 'failed'):
@@ -97,20 +92,61 @@ class BridgeJournal:
             self._validate_response(value, response)
             if value['status'] != response['status']:
                 raise ValueError('bridge status/result mismatch')
+        if 'creationResolution' in value:
+            self._validate_creation_resolution(value, value['creationResolution'])
+            if value.get('creationResolutionSha') != digest(value['creationResolution']):
+                raise ValueError('creation resolution hash mismatch')
         return value
 
-    def prepare_read(self, operation_id, role, attempt, task_revision, thread_id):
+    @staticmethod
+    def _validate_params(method, params):
+        if not isinstance(params, dict):
+            raise ValueError('bridge parameters must be an object')
+        def text_field(name):
+            if not isinstance(params.get(name), str) or not params[name].strip():
+                raise ValueError(name + ' required')
+        if method == METHOD:
+            text_field('threadId')
+            if params != {'threadId': params['threadId'], 'hostId': 'local',
+                          'turnLimit': 1, 'includeOutputs': False, 'maxOutputCharsPerItem': 400}:
+                raise ValueError('invalid read-only bridge parameters')
+        elif method == SEND_METHOD:
+            if set(params) != {'threadId', 'hostId', 'prompt'} or params.get('hostId') != 'local':
+                raise ValueError('invalid send parameters; no model override allowed')
+            text_field('threadId'); text_field('prompt')
+        elif method == CREATE_METHOD:
+            if set(params) != {'prompt', 'model', 'thinking', 'title', 'target'}:
+                raise ValueError('explicit creation configuration required')
+            for field in ('prompt', 'model', 'thinking', 'title'):
+                text_field(field)
+            if params['thinking'] not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
+                raise ValueError('invalid thinking')
+            target = params['target']
+            if (not isinstance(target, dict) or set(target) != {'type', 'projectId', 'environment'}
+                    or target['type'] != 'project' or not isinstance(target['projectId'], str)
+                    or not target['projectId'].strip()):
+                raise ValueError('project target required')
+            env = target['environment']
+            if (not isinstance(env, dict) or set(env) != {'type', 'startingState'}
+                    or env['type'] != 'worktree'):
+                raise ValueError('isolated worktree required')
+            start = env['startingState']
+            if (not isinstance(start, dict) or set(start) != {'type', 'branchName'}
+                    or start['type'] != 'branch' or not isinstance(start['branchName'], str)
+                    or not start['branchName'].strip()):
+                raise ValueError('existing baseline ref required; no implicit branch creation')
+        else:
+            raise ValueError('unsupported bridge method')
+
+    def _prepare(self, operation_id, role, attempt, task_revision, method, params):
         _segment(role)
         for name, number, minimum in [('attempt', attempt, 1), ('taskRevision', task_revision, 0)]:
             if type(number) is not int or number < minimum:
                 raise ValueError('invalid ' + name)
-        if not isinstance(thread_id, str) or not thread_id.strip():
-            raise ValueError('threadId required')
-        request = {'method': METHOD, 'binding': {
+        self._validate_params(method, params)
+        request = {'method': method, 'binding': {
             'runId': self.run_id, 'role': role, 'attempt': attempt,
-            'taskRevision': task_revision}, 'params': {
-                'threadId': thread_id, 'hostId': 'local', 'turnLimit': 1,
-                'includeOutputs': False, 'maxOutputCharsPerItem': 400}}
+            'taskRevision': task_revision}, 'params': copy.deepcopy(params)}
         path = self._path(operation_id)
         with self._lock(path):
             if path.exists():
@@ -123,6 +159,18 @@ class BridgeJournal:
                       'requestSha': digest(request)}
             write_state_atomic(path, record)
             return copy.deepcopy(record)
+
+    def prepare_read(self, operation_id, role, attempt, task_revision, thread_id):
+        return self._prepare(operation_id, role, attempt, task_revision, METHOD, {
+            'threadId': thread_id, 'hostId': 'local', 'turnLimit': 1,
+            'includeOutputs': False, 'maxOutputCharsPerItem': 400})
+
+    def prepare_create(self, operation_id, role, attempt, task_revision, params):
+        return self._prepare(operation_id, role, attempt, task_revision, CREATE_METHOD, params)
+
+    def prepare_send(self, operation_id, role, attempt, task_revision, thread_id, message):
+        return self._prepare(operation_id, role, attempt, task_revision, SEND_METHOD, {
+            'threadId': thread_id, 'hostId': 'local', 'prompt': message})
 
     def inspect(self, operation_id):
         return self._read(self._path(operation_id))
@@ -161,7 +209,7 @@ class BridgeJournal:
         for field in ('operationId', 'runId', 'requestSha', 'claimToken'):
             if response.get(field) != record.get(field):
                 raise ValueError('response binding mismatch: ' + field)
-        if response.get('method') != METHOD or response.get('source') != 'desktop_tool_bridge':
+        if response.get('method') != record['request']['method'] or response.get('source') != 'desktop_tool_bridge':
             raise ValueError('response source/method mismatch')
         try:
             stamp = datetime.fromisoformat(response['observedAt'].replace('Z', '+00:00'))
@@ -172,12 +220,24 @@ class BridgeJournal:
             raise ValueError('invalid response observation time')
         if response.get('status') == 'succeeded':
             metadata = response.get('metadata')
-            if not isinstance(metadata, dict) or metadata.get('threadId') != record['request']['params']['threadId']:
-                raise ValueError('response thread identity mismatch')
-            if set(metadata) - {'threadId', 'status', 'hostId'}:
-                raise ValueError('unexpected thread metadata fields')
-            if metadata.get('hostId') != 'local' or not isinstance(metadata.get('status'), str) or not metadata['status']:
-                raise ValueError('thread status/hostId required')
+            if not isinstance(metadata, dict) or metadata.get('hostId') != 'local':
+                raise ValueError('response metadata/hostId required')
+            method = record['request']['method']
+            if method == CREATE_METHOD:
+                keys = set(metadata)
+                if keys not in ({'threadId', 'hostId'}, {'clientThreadId', 'hostId'}):
+                    raise ValueError('creation requires exactly one actual or asynchronous ID')
+                identity = metadata.get('threadId', metadata.get('clientThreadId'))
+                if not isinstance(identity, str) or not identity.strip():
+                    raise ValueError('creation identity required')
+            else:
+                if (set(metadata) != {'threadId', 'status', 'hostId'}
+                        or metadata.get('threadId') != record['request']['params']['threadId']):
+                    raise ValueError('response thread identity mismatch')
+                if not isinstance(metadata.get('status'), str) or not metadata['status']:
+                    raise ValueError('thread status required')
+                if method == SEND_METHOD and metadata['status'] != 'accepted':
+                    raise ValueError('send receipt only proves accepted, not task completion')
         elif response.get('status') == 'failed':
             if not isinstance(response.get('error'), str) or not response['error']:
                 raise ValueError('failed response requires error')
@@ -186,6 +246,47 @@ class BridgeJournal:
         sha = response.get('toolResultSha')
         if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{64}', sha):
             raise ValueError('tool result hash required')
+
+    @staticmethod
+    def _validate_creation_resolution(record, resolution):
+        if (record['request']['method'] != CREATE_METHOD or record['status'] != 'succeeded'
+                or 'clientThreadId' not in record['response'].get('metadata', {})):
+            raise ValueError('only successful asynchronous creation can be resolved')
+        fields = {'clientThreadId', 'threadId', 'hostId', 'projectId', 'title',
+                  'model', 'thinking', 'branchName', 'cwd', 'observedAt', 'toolResultSha', 'evidence'}
+        if not isinstance(resolution, dict) or set(resolution) != fields:
+            raise ValueError('exact creation reconciliation metadata required')
+        for field in fields:
+            if not isinstance(resolution[field], str) or not resolution[field].strip():
+                raise ValueError('invalid resolution ' + field)
+        params = record['request']['params']
+        expected = {k: params[k] for k in ('title', 'model', 'thinking')}
+        expected.update(hostId='local', projectId=params['target']['projectId'],
+                        branchName=params['target']['environment']['startingState']['branchName'],
+                        clientThreadId=record['response']['metadata']['clientThreadId'])
+        if any(resolution[k] != v for k, v in expected.items()):
+            raise ValueError('asynchronous creation identity mismatch')
+        if (resolution['threadId'] == resolution['clientThreadId']
+                or not Path(resolution['cwd']).is_absolute()
+                or not re.fullmatch(r'[0-9a-f]{64}', resolution['toolResultSha'])):
+            raise ValueError('actual threadId, absolute cwd and evidence hash required')
+        stamp = datetime.fromisoformat(resolution['observedAt'].replace('Z', '+00:00'))
+        if stamp.tzinfo is None or not datetime.fromisoformat(record['claimedAt']) <= stamp <= datetime.now(timezone.utc):
+            raise ValueError('resolution observation time out of range')
+
+    def resolve_creation(self, operation_id, resolution):
+        """leader 独立核对精确元数据后回填；不靠标题猜测线程，不重复创建。"""
+        path = self._path(operation_id)
+        with self._lock(path):
+            record = self._read(path)
+            self._validate_creation_resolution(record, resolution)
+            if 'creationResolution' in record:
+                if record['creationResolution'] != resolution:
+                    raise ValueError('creation resolution cannot be overwritten')
+                return copy.deepcopy(record)
+            record.update(creationResolution=copy.deepcopy(resolution), creationResolutionSha=digest(resolution))
+            write_state_atomic(path, record)
+            return copy.deepcopy(record)
 
     def complete(self, operation_id, response, reconciliation=None):
         path = self._path(operation_id)
@@ -234,9 +335,65 @@ class DesktopBridgeAdapter(UnsupportedHostAdapter):
                 'toolResultSha': response['toolResultSha'], 'metadata': copy.deepcopy(response['metadata'])}
 
 
+class DesktopWriteBridgeAdapter(DesktopBridgeAdapter):
+    """显式启用创建和消息账本；实际工具仍由桌面 leader 执行。"""
+
+    def __init__(self, *args, create_config=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.create_config = copy.deepcopy(create_config)
+        self.capabilities = dict(super().capabilities, create_worker=create_config is not None,
+                                 send_message=True, queued_actions=True)
+
+    def dispatch_binding(self):
+        return {'runId': self.journal.run_id, 'role': self.role, 'attempt': self.attempt,
+                'taskRevision': self.task_revision, 'operationId': self.operation_id}
+
+    @staticmethod
+    def _result(record):
+        if record['status'] == 'failed':
+            raise RuntimeError('host action failed: ' + record['response']['error'])
+        if record['status'] != 'succeeded':
+            raise BridgePending('bridge operation ' + record['operationId'] + ': ' + record['status'])
+        return copy.deepcopy(record['response']['metadata'])
+
+    def create_worker(self, prompt, project_id):
+        if self.create_config is None:
+            raise NotImplementedError('explicit create_config required')
+        if set(self.create_config) != {'model', 'thinking', 'title', 'branchName'}:
+            raise ValueError('invalid create_config')
+        params = {k: self.create_config[k] for k in ('model', 'thinking', 'title')}
+        params.update(prompt=prompt, target={'type': 'project', 'projectId': project_id,
+                      'environment': {'type': 'worktree', 'startingState': {
+                          'type': 'branch', 'branchName': self.create_config['branchName']}}})
+        record = self.journal.prepare_create(self.operation_id, self.role, self.attempt,
+                                             self.task_revision, params)
+        metadata = self._result(record)
+        if 'clientThreadId' in metadata:
+            if 'creationResolution' not in record:
+                raise BridgePending('asynchronous creation requires exact metadata reconciliation; do not recreate')
+            metadata = {k: record['creationResolution'][k] for k in ('threadId', 'hostId')}
+        return metadata
+
+    def send_message(self, thread_id, message):
+        self.journal.prepare_send(self.operation_id, self.role, self.attempt,
+                                  self.task_revision, thread_id, message)
+        return self.completed_message(thread_id, message)
+
+    def completed_message(self, thread_id, message):
+        """仅回读既存发送；恢复派发时禁止生成新的请求。"""
+        record = self.journal.inspect(self.operation_id)
+        expected = {'method': SEND_METHOD, 'binding': {
+            k: v for k, v in self.dispatch_binding().items() if k != 'operationId'},
+            'params': {'threadId': thread_id, 'hostId': 'local', 'prompt': message}}
+        if record['request'] != expected:
+            raise ValueError('message receipt binding mismatch')
+        return self._result(record)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Desktop bridge request journal; never calls host tools')
-    parser.add_argument('action', choices=['observe', 'prepare-read', 'inspect', 'claim', 'unknown', 'complete'])
+    parser.add_argument('action', choices=['observe', 'resume-dispatch', 'prepare-read', 'prepare-create', 'prepare-send',
+                                         'resolve-creation', 'inspect', 'claim', 'unknown', 'complete'])
     parser.add_argument('--repo', default='.')
     parser.add_argument('--run', required=True)
     parser.add_argument('--operation', required=True)
@@ -247,10 +404,13 @@ def main(argv=None):
     parser.add_argument('--reason')
     parser.add_argument('--response')
     parser.add_argument('--reconciliation')
+    parser.add_argument('--params', help='creation tool parameters JSON file')
+    parser.add_argument('--message-file', help='UTF-8 message text; never execute as shell code')
+    parser.add_argument('--resolution', help='exact async identity reconciliation JSON file')
     args = parser.parse_args(argv)
     try:
         journal = BridgeJournal(args.repo, args.run)
-        if args.action == 'observe':
+        if args.action in ('observe', 'resume-dispatch'):
             from controller import Controller
             from state_schema import validate_state
             from state_view import write_state_view
@@ -259,13 +419,26 @@ def main(argv=None):
             worker = next((w for w in state['workers'] if w['role'] == args.role and w['attempt'] == args.attempt), None)
             if worker is None:
                 raise ValueError('registered worker role/attempt not found')
-            adapter = DesktopBridgeAdapter(args.repo, args.run, args.operation,
-                                           args.role, args.attempt, worker.get('activityRevision', 0))
+            adapter_class = DesktopBridgeAdapter if args.action == 'observe' else DesktopWriteBridgeAdapter
+            adapter = adapter_class(args.repo, args.run, args.operation,
+                                    args.role, args.attempt, worker.get('activityRevision', 0))
             controller = Controller(adapter, args.repo, args.run, state)
-            result = controller.observe_worker_host(args.role, args.attempt)
+            if args.action == 'observe':
+                result = controller.observe_worker_host(args.role, args.attempt)
+            else:
+                result = controller.resume_bridge_dispatch(args.role, args.attempt)
             write_state_view(args.repo, args.run)
         elif args.action == 'prepare-read':
             result = journal.prepare_read(args.operation, args.role, args.attempt, args.task_revision, args.thread)
+        elif args.action == 'prepare-create':
+            result = journal.prepare_create(args.operation, args.role, args.attempt,
+                                             args.task_revision, read_state(args.params))
+        elif args.action == 'prepare-send':
+            result = journal.prepare_send(args.operation, args.role, args.attempt,
+                                           args.task_revision, args.thread,
+                                           Path(args.message_file).read_text(encoding='utf-8'))
+        elif args.action == 'resolve-creation':
+            result = journal.resolve_creation(args.operation, read_state(args.resolution))
         elif args.action == 'claim':
             result = journal.claim(args.operation)
         elif args.action == 'unknown':

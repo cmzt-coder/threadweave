@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 
 from budget import check_retry
-from host_adapter import HostAdapter
+from host_adapter import HostActionPending, HostAdapter
 from startup_gate import validate_startup
 from run_log import log_event
 from state_schema import validate_state
@@ -183,6 +183,13 @@ class Controller:
             raise RuntimeError('team gate not ready: ' + ', '.join(blocked))
 
         self._scope_reservations()
+        bridge_binding = None
+        if getattr(self.adapter, 'capabilities', {}).get('queued_actions'):
+            bridge_binding = self.adapter.dispatch_binding()
+            if bridge_binding != {'runId': self.run_id, 'role': role, 'attempt': attempt,
+                                  'taskRevision': worker.get('activityRevision', 0),
+                                  'operationId': bridge_binding.get('operationId')} or not bridge_binding.get('operationId'):
+                raise ValueError('bridge dispatch binding mismatch')
         dispatch_id = f"{role}#{attempt}@{_now_iso()}"
         worker['dispatchIntent'] = {
             'dispatchId': dispatch_id,
@@ -190,13 +197,6 @@ class Controller:
             'at': _now_iso(),
             'result': 'pending',
         }
-        self.save()
-        try:
-            self.adapter.send_message(worker['threadId'], message)
-        except Exception:
-            worker['dispatchIntent']['result'] = 'unknown'
-            self.save()
-            raise
         worker['startupEvidence'] = {
             'role': report_role if report_role is not None else role,
             'attempt': report_attempt if report_attempt is not None else attempt,
@@ -208,12 +208,54 @@ class Controller:
             'status_porcelain': startup_report['status_porcelain'],
             'validatedAt': _now_iso(),
         }
+        if bridge_binding is not None:
+            worker['dispatchIntent']['bridgeOperationId'] = bridge_binding['operationId']
+        self.save()
+        try:
+            self.adapter.send_message(worker['threadId'], message)
+        except HostActionPending:
+            # 请求账本负责区分 pending/in_flight/unknown，控制器不猜测调用结果。
+            raise
+        except Exception:
+            worker['dispatchIntent']['result'] = 'unknown'
+            self.save()
+            raise
+        return self._finish_dispatch(role, attempt)
+
+    def _finish_dispatch(self, role, attempt):
+        snapshot = copy.deepcopy(self.state)
+        worker = self._worker(role, attempt)
         worker['dispatchIntent']['result'] = 'sent'
         worker['dispatchAt'] = _now_iso()
         worker['activityRevision'] = worker.get('activityRevision', 0) + 1
         worker.pop('stopStatus', None)
-        self.transition_worker(role, attempt, 'dispatched')
+        try:
+            self.transition_worker(role, attempt, 'dispatched')
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
         return worker['threadId']
+
+    def resume_bridge_dispatch(self, role, attempt):
+        """同一账本发送回执落盘后恢复状态；不发起新的宿主消息。"""
+        worker = self._worker(role, attempt)
+        self._ensure_external_action_allowed(worker, 'resume_dispatch')
+        if self._active_workers().get(role) is not worker or worker['state'] != 'ready':
+            raise RuntimeError('only active ready worker can resume dispatch')
+        intent = worker.get('dispatchIntent', {})
+        if intent.get('result') not in ('pending', 'unknown') or not intent.get('bridgeOperationId'):
+            raise RuntimeError('unresolved bridge dispatch intent required')
+        if not getattr(self.adapter, 'capabilities', {}).get('queued_actions'):
+            raise ValueError('queued bridge adapter required')
+        if self.adapter.dispatch_binding() != {
+                'runId': self.run_id, 'role': role, 'attempt': attempt,
+                'taskRevision': worker.get('activityRevision', 0),
+                'operationId': intent['bridgeOperationId']}:
+            raise ValueError('bridge dispatch receipt binding mismatch')
+        self._scope_reservations()
+        self.adapter.completed_message(worker['threadId'], intent['message'])
+        return self._finish_dispatch(role, attempt)
 
     def _review_worker(self, role, attempt):
         """只审查当前有效任务；停止请求与终端 run 不允许继续推进。"""
@@ -577,6 +619,18 @@ class Controller:
                 f'run is {self.state.get("status")}; create_worker blocked')
         if not self.state.get('authorization', {}).get('provenance'):
             raise RuntimeError('authorization provenance missing; create_worker blocked')
+        if getattr(self.adapter, 'capabilities', {}).get('queued_actions'):
+            binding = self.adapter.dispatch_binding()
+            if (self.state.get('runId') != self.run_id or binding.get('runId') != self.run_id
+                    or project_id != self.state['project']['projectId']):
+                raise ValueError('bridge creation run/project mismatch')
+            worker = self._worker(binding['role'], binding['attempt'])
+            self._ensure_external_action_allowed(worker, 'create_worker')
+            if (self._active_workers().get(binding['role']) is not worker
+                    or worker['state'] not in ('creating', 'pending')
+                    or worker.get('threadId')
+                    or binding['taskRevision'] != worker.get('activityRevision', 0)):
+                raise ValueError('bridge creation worker binding/state mismatch')
         try:
             if getattr(self.adapter, 'capabilities', {}).get('create_timeout'):
                 return self.adapter.create_worker(
