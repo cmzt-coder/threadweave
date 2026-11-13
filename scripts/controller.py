@@ -255,12 +255,12 @@ class Controller:
                 'filesChanged': sorted(x for x in paths if x)}
 
     def _scope_reservations(self):
-        from scope import check_reservations
         workers = list(self._active_workers().values())
         if not any('ownedPaths' in w for w in workers):
             return
         if any('ownedPaths' not in w for w in workers):
             raise RuntimeError('all active workers must declare ownedPaths')
+        from scope import check_reservations
         resources = []
         config_path = Path(self.repo_root) / 'threadweave.config.json'
         if config_path.is_file():
