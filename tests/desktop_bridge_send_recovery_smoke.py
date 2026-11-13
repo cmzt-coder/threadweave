@@ -254,4 +254,109 @@ with tempfile.TemporaryDirectory() as root:
           restarted.adapter.journal._path('accepted-send').read_bytes()
           == accepted_journal_bytes)
 
+    # 3. ledger 状态为 unknown 时，重启后的 resume 必须阻塞；只有显式
+    #    reconciliation 才能让同一原始 claim 的 accepted receipt 恢复一次。
+    td = str(Path(root) / 'unknown-case')
+    unknown_state = make_state()
+    unknown_adapter = make_adapter(td, 'unknown-send')
+    unknown_controller = Controller(unknown_adapter, td, RUN_ID, unknown_state)
+    unknown_controller.save()
+    unknown_path = run_state_path(td, RUN_ID)
+
+    report = startup_report(unknown_state)
+    dispatch_expected = expected(unknown_state)
+    rejects('unknown-dispatch-queues', BridgePending,
+            lambda: unknown_controller.dispatch(
+                ROLE, ATTEMPT, 'unknown nonce', report, dispatch_expected))
+
+    unknown_claim = unknown_adapter.journal.claim('unknown-send')
+    original_claim_token = unknown_claim['claimToken']
+    unknown_adapter.journal.mark_unknown(
+        'unknown-send', 'fixture host outcome was lost')
+    unknown_journal_bytes = unknown_adapter.journal._path(
+        'unknown-send').read_bytes()
+    unknown_state_before_resume = read_state(unknown_path)
+    unknown_state_bytes = unknown_path.read_bytes()
+    unknown_revision = unknown_state_before_resume['revision']
+
+    unknown_restarted = Controller(
+        make_adapter(td, 'unknown-send'), td, RUN_ID,
+        unknown_state_before_resume)
+    unknown_memory_before_resume = copy.deepcopy(unknown_restarted.state)
+    with patch.object(unknown_restarted.adapter, 'send_message',
+                      side_effect=AssertionError('must not resend unknown send')):
+        rejects('unknown-ledger-resume-blocks', BridgePending,
+                lambda: unknown_restarted.resume_bridge_dispatch(ROLE, ATTEMPT))
+    check('unknown-ledger-resume-does-not-send',
+          unknown_restarted.state == unknown_memory_before_resume)
+    check('unknown-ledger-resume-preserves-state',
+          read_state(unknown_path) == unknown_state_before_resume
+          and unknown_path.read_bytes() == unknown_state_bytes)
+    check('unknown-ledger-resume-preserves-journal',
+          unknown_adapter.journal._path('unknown-send').read_bytes()
+          == unknown_journal_bytes)
+
+    accepted_unknown_receipt = receipt(unknown_claim, {
+        'threadId': THREAD_ID, 'hostId': 'local', 'status': 'accepted'})
+    rejects('unknown-receipt-without-reconciliation-rejected', RuntimeError,
+            lambda: unknown_adapter.journal.complete(
+                'unknown-send', accepted_unknown_receipt))
+    unreconciled = unknown_adapter.journal.inspect('unknown-send')
+    check('unreconciled-receipt-leaves-ledger-unknown',
+          unreconciled['status'] == 'unknown'
+          and unreconciled['claimToken'] == original_claim_token
+          and unknown_adapter.journal._path('unknown-send').read_bytes()
+          == unknown_journal_bytes)
+
+    unknown_adapter.journal.complete(
+        'unknown-send', accepted_unknown_receipt,
+        'fixture explicit reconciliation: original claimed send was accepted')
+    reconciled = unknown_adapter.journal.inspect('unknown-send')
+    reconciled_journal_bytes = unknown_adapter.journal._path(
+        'unknown-send').read_bytes()
+    check('unknown-receipt-with-reconciliation-accepted',
+          reconciled['status'] == 'succeeded'
+          and reconciled['response']['metadata']['status'] == 'accepted'
+          and reconciled['claimToken'] == original_claim_token)
+    check('unknown-reconciliation-retains-original-claim-binding',
+          reconciled['claimToken'] == unknown_claim['claimToken']
+          and reconciled['requestSha'] == unknown_claim['requestSha'])
+    check('unknown-reconciliation-evidence-is-durable',
+          reconciled['reconciliation']['evidence'].startswith('fixture explicit'))
+
+    unknown_recovered = Controller(
+        make_adapter(td, 'unknown-send'), td, RUN_ID,
+        read_state(unknown_path))
+    with patch.object(unknown_recovered.adapter, 'send_message',
+                      side_effect=AssertionError('must not resend reconciled send')):
+        recovered_unknown_thread = unknown_recovered.resume_bridge_dispatch(
+            ROLE, ATTEMPT)
+    recovered_unknown = read_state(unknown_path)
+    recovered_unknown_worker = worker_from(recovered_unknown)
+    check('unknown-receipt-resumes-once-without-send',
+          recovered_unknown_thread == THREAD_ID)
+    check('unknown-receipt-dispatches-worker',
+          recovered_unknown_worker['state'] == 'dispatched')
+    check('unknown-receipt-advances-activity-once',
+          recovered_unknown_worker['activityRevision'] == 1)
+    check('unknown-receipt-resolves-intent',
+          recovered_unknown_worker['dispatchIntent']['result'] == 'sent')
+    check('unknown-receipt-saves-exactly-one-new-revision',
+          recovered_unknown['revision'] == unknown_revision + 1)
+    check('unknown-receipt-preserves-journal-bytes',
+          unknown_adapter.journal._path('unknown-send').read_bytes()
+          == reconciled_journal_bytes)
+    check('unknown-receipt-preserves-original-claim-token',
+          unknown_adapter.journal.inspect('unknown-send')['claimToken']
+          == original_claim_token)
+
+    recovered_unknown_bytes = unknown_path.read_bytes()
+    rejects('unknown-receipt-second-resume-blocked', RuntimeError,
+            lambda: unknown_recovered.resume_bridge_dispatch(ROLE, ATTEMPT))
+    check('unknown-receipt-second-resume-does-not-rewrite-state',
+          unknown_path.read_bytes() == recovered_unknown_bytes)
+    check('unknown-receipt-second-resume-does-not-rewrite-journal',
+          unknown_adapter.journal._path('unknown-send').read_bytes()
+          == reconciled_journal_bytes)
+
 print(json.dumps({'passed': len(checks), 'checks': checks}, ensure_ascii=False))
