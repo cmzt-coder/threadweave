@@ -5,7 +5,12 @@ from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
-from recovery import build_recovery_plan, classify_worker_recovery  # noqa: E402
+from recovery import (  # noqa: E402
+    build_preservation_record,
+    build_recovery_plan,
+    classify_worker_recovery,
+    classify_thread_presence,
+)
 
 results = []
 
@@ -28,11 +33,37 @@ base_observed = {
 
 check('terminal-skip',
       classify_worker_recovery(dict(base_worker, state='archived'), base_observed) == 'skip')
-check('missing-thread-recreate',
-      classify_worker_recovery(dict(base_worker, threadId=None), {'thread_exists': False}) == 'recreate')
+check('missing-thread-unconfirmed-revalidate',
+      classify_worker_recovery(dict(base_worker, threadId=None), {'thread_exists': False}) == 'revalidate')
+check('thread-presence-classification',
+      classify_thread_presence({'thread_exists': False}) == 'missing_unconfirmed')
+confirmed_missing = dict(
+    base_observed, thread_exists=False, thread_status=None,
+    thread_absence_confirmed=True,
+    thread_absence_evidence='list_threads exact lookup returned not found',
+    worktree_exists=False, branch_preserved=True,
+    report_present=False, notes_present=False,
+)
+check('confirmed-missing-preserve-first',
+      classify_worker_recovery(dict(base_worker, threadId=None), confirmed_missing)
+      == 'preserve_then_recreate')
+preserved = build_preservation_record(dict(base_worker, threadId=None), confirmed_missing)
+check('preservation-record-hash', len(preserved['preservationSha']) == 64)
+check('confirmed-missing-after-preservation-recreate',
+      classify_worker_recovery(
+          dict(base_worker, threadId=None, recoveryPreservation=preserved),
+          confirmed_missing) == 'recreate')
 check('replacement-limit-block',
       classify_worker_recovery(dict(base_worker, attempt=2, threadId=None),
-                               {'thread_exists': False}, replacement_limit=1) == 'block')
+                               confirmed_missing, replacement_limit=1) == 'block')
+dirty_missing = dict(
+    confirmed_missing, worktree_exists=True, status_porcelain=' M notes.md',
+    unmerged_commits=False, dirty_patch_archived=False,
+    report_present=False, notes_present=False,
+)
+check('dirty-missing-preserve-work',
+      classify_worker_recovery(dict(base_worker, threadId=None), dirty_missing)
+      == 'preserve_work')
 check('unknown-thread-revalidate',
       classify_worker_recovery(base_worker, dict(base_observed, thread_exists=None)) == 'revalidate')
 check('dispatch-intent-pending-revalidate',

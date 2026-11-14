@@ -772,6 +772,134 @@
                 }
               }
             }
+          },
+          "recoveryPreservation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "oldAttempt",
+              "threadId",
+              "threadAbsenceConfirmed",
+              "threadAbsenceEvidence",
+              "branch",
+              "head",
+              "worktree",
+              "worktreeExists",
+              "statusPorcelain",
+              "unmergedCommits",
+              "branchPreserved",
+              "reportPresent",
+              "reportArchived",
+              "notesPresent",
+              "notesArchived",
+              "dirtyPatchArchived",
+              "dirtyPatchSha256",
+              "preservedAt",
+              "preservationSha"
+            ],
+            "properties": {
+              "oldAttempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "threadAbsenceConfirmed": {
+                "const": true
+              },
+              "threadAbsenceEvidence": {
+                "type": "string",
+                "minLength": 1
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "worktree": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "worktreeExists": {
+                "type": "boolean"
+              },
+              "statusPorcelain": {
+                "type": "string"
+              },
+              "unmergedCommits": {
+                "type": "boolean"
+              },
+              "branchPreserved": {
+                "const": true
+              },
+              "reportPresent": {
+                "type": "boolean"
+              },
+              "reportArchived": {
+                "type": "boolean"
+              },
+              "notesPresent": {
+                "type": "boolean"
+              },
+              "notesArchived": {
+                "type": "boolean"
+              },
+              "dirtyPatchArchived": {
+                "type": "boolean"
+              },
+              "dirtyPatchSha256": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "preservedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "preservationSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "recoveryReplacementAuthorization": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "preservationSha",
+              "nextAttempt",
+              "limit",
+              "authorizedAt"
+            ],
+            "properties": {
+              "preservationSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "nextAttempt": {
+                "type": "integer",
+                "minimum": 2
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "authorizedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
           }
         }
       }

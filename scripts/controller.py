@@ -11,6 +11,7 @@ import subprocess
 
 from budget import check_retry
 from failure import FAILURE_SOURCES, build_failure_record
+from recovery import build_preservation_record, verify_preservation_record
 from host_adapter import HostActionPending, HostAdapter
 from startup_gate import validate_startup
 from run_log import log_event
@@ -565,6 +566,59 @@ class Controller:
             worker.pop('stopStatus', None)
         self.save()
         return intent['result']
+
+    def record_recovery_preservation(self, role, attempt, observed):
+        """持久化确认失联后的旧 attempt 成果保全记录；不创建 replacement。"""
+        worker = self._worker(role, attempt)
+        if worker.get('state') in ('integrated', 'archived', 'cancelled'):
+            raise RuntimeError('terminal worker cannot record recovery preservation')
+        record = build_preservation_record(worker, observed)
+        actual = self._git(self.repo_root, 'rev-parse', '--verify',
+                           record['branch'] + '^{commit}')
+        if actual != record['head']:
+            raise RuntimeError('preserved branch head does not match observation')
+        snapshot = copy.deepcopy(self.state)
+        try:
+            worker['recoveryPreservation'] = record
+            self.save()
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
+        return copy.deepcopy(record)
+
+    def authorize_recovery_replacement(self, role, attempt, replacement_limit=None):
+        """旧成果保全通过后授权下一 attempt；不创建线程或 worktree。"""
+        worker = self._worker(role, attempt)
+        record = worker.get('recoveryPreservation')
+        if not verify_preservation_record(record):
+            raise RuntimeError('valid recovery preservation record required')
+        if (record.get('oldAttempt') != attempt
+                or record.get('branch') != worker.get('branch')):
+            raise RuntimeError('recovery preservation identity mismatch')
+        if replacement_limit is None:
+            replacement_limit = self.state.get('limits', {}).get('replacementPerRole', 1)
+        if any(w.get('role') == role and w.get('attempt', 0) > attempt
+               for w in self.state.get('workers', [])):
+            raise RuntimeError('replacement attempt already exists')
+        result = check_retry(attempt, replacement_limit)
+        if result['status'] == 'blocked':
+            raise RuntimeError(f'replacement limit reached for {role}#{attempt}')
+        authorization = {
+            'preservationSha': record['preservationSha'],
+            'nextAttempt': attempt + 1,
+            'limit': replacement_limit,
+            'authorizedAt': _now_iso(),
+        }
+        snapshot = copy.deepcopy(self.state)
+        try:
+            worker['recoveryReplacementAuthorization'] = authorization
+            self.save()
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
+        return copy.deepcopy(authorization)
 
     def replace_worker(self, role, attempt, replacement_limit=None):
         """替换前要求停止证据、无后续 attempt，并从持久状态读取上限。"""

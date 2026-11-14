@@ -17,6 +17,7 @@ CLEANUP_DUE_RUN_STATUSES = {'complete', 'failed', 'aborted', 'cleanup_pending'}
 PRIORITY_DISPATCH = 10
 PRIORITY_INTEGRATION_BLOCKED = 15
 PRIORITY_MISSING_EVIDENCE = 20
+PRIORITY_PRESERVE = 25
 PRIORITY_BLOCK = 30
 PRIORITY_RECREATE = 40
 PRIORITY_REUSE = 50
@@ -135,6 +136,11 @@ def _recovery_missing(worker, observed, state):
 
     if observed.get('thread_exists') is None:
         issues.append('thread_exists')
+    if observed.get('thread_exists') is False:
+        if observed.get('thread_absence_confirmed') is not True:
+            issues.append('thread_absence_confirmed')
+        if not isinstance(observed.get('thread_absence_evidence'), str) or not observed.get('thread_absence_evidence').strip():
+            issues.append('thread_absence_evidence')
     if observed.get('thread_exists') is True and observed.get('thread_status') is None:
         issues.append('thread_status')
 
@@ -326,6 +332,50 @@ def _recovery_action(worker, observed, recovery, state):
             prerequisites=['resolve dispatchIntent.result from host evidence'],
             priority=PRIORITY_DISPATCH,
             dispatchResult=intent_result,
+        )
+
+    if recovery == 'preserve_work':
+        gaps = recovery_result.get('preservationGaps', [])
+        return _make_action(
+            'preserve_work', key,
+            'thread absence is confirmed but old attempt artifacts are not yet safely preserved',
+            observed,
+            missing=gaps,
+            prerequisites=[
+                'archive dirty worktree changes with SHA256 evidence',
+                'preserve the worker branch/HEAD and existing reports/notes',
+                'do not delete or recreate until preservation evidence is complete',
+            ],
+            priority=PRIORITY_PRESERVE,
+            threadPresence=recovery_result.get('threadPresence'),
+            preservationGaps=gaps,
+        )
+
+    if recovery == 'preserve_then_recreate':
+        gaps = recovery_result.get('preservationGaps', [])
+        if gaps:
+            return _make_action(
+                'revalidate', key,
+                f"cannot record preservation; missing evidence: {', '.join(gaps)}",
+                observed,
+                missing=gaps,
+                prerequisites=['collect preservation evidence'],
+                priority=PRIORITY_MISSING_EVIDENCE,
+                threadPresence=recovery_result.get('threadPresence'),
+                preservationGaps=gaps,
+            )
+        return _make_action(
+            'preserve_then_recreate', key,
+            'thread absence is confirmed and old attempt artifacts have preservation evidence',
+            observed,
+            prerequisites=[
+                'record recovery preservation through the controller',
+                'confirm replacement budget and no later attempt',
+                'create a new attempt without deleting old branch/report evidence',
+            ],
+            priority=PRIORITY_RECREATE,
+            threadPresence=recovery_result.get('threadPresence'),
+            preservationGaps=[],
         )
 
     # block 本身不会创建或发送资源；保留分类器的阻断结论，并附上缺失证据。
@@ -628,6 +678,9 @@ def build_next_actions(state, observations=None):
             state, role=worker.get('role'), attempt=worker.get('attempt', 1))
         if action is not None and failure:
             action['failure'] = failure_summary(failure)
+        if action is not None:
+            action.setdefault('threadPresence', recovery.get('threadPresence'))
+            action.setdefault('preservationGaps', recovery.get('preservationGaps', []))
         if action is not None and execution_blocked:
             if action.get('action') in ('reuse', 'recreate'):
                 action = _blocked_recovery_action(

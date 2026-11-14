@@ -251,12 +251,14 @@ check('reported-sha-mismatch-block', reported_plan['actions'][0]['action'] == 'b
 gone = make_worker(threadId='thread-a')
 gone_obs = recovery_observation(
     gone, thread_exists=False, thread_status=None, worktree_exists=False,
+    thread_absence_confirmed=True,
+    thread_absence_evidence='list_threads exact lookup returned not found',
+    branch_preserved=True, report_present=False, notes_present=False,
 )
-gone_obs.pop('head')
-gone_obs.pop('branch')
 gone_obs.pop('status_porcelain')
-recreate_plan = build_next_actions(state_with([gone]), {'a#1': gone_obs})
-check('confirmed-gone-recreate', recreate_plan['actions'][0]['action'] == 'recreate')
+preserve_plan = build_next_actions(state_with([gone]), {'a#1': gone_obs})
+check('confirmed-gone-preserve-first', preserve_plan['actions'][0]['action'] == 'preserve_then_recreate')
+check('preserve-action-no-direct-recreate', preserve_plan['actions'][0]['action'] != 'recreate')
 
 unknown_worktree = {
     'observedAt': now(),
@@ -264,25 +266,30 @@ unknown_worktree = {
     'thread_status': None,
 }
 unknown_plan = build_next_actions(state_with([gone]), {'a#1': unknown_worktree})
-check('recreate-requires-worktree-evidence',
+check('unconfirmed-gone-revalidate',
       unknown_plan['actions'][0]['action'] == 'revalidate')
-check('recreate-missing-worktree-listed',
-      'worktree_exists' in unknown_plan['actions'][0]['missingEvidence'])
+check('unconfirmed-gone-missing-evidence',
+      'thread_absence_confirmed' in unknown_plan['actions'][0]['missingEvidence'])
 
 dirty_gone = recovery_observation(
     gone, thread_exists=False, thread_status=None, status_porcelain=' M notes.md',
     worktree={'unmerged_commits': False},
+    thread_absence_confirmed=True,
+    thread_absence_evidence='list_threads exact lookup returned not found',
+    branch_preserved=True, report_present=False, notes_present=False,
+    dirty_patch_archived=False,
 )
 dirty_plan = build_next_actions(state_with([gone]), {'a#1': dirty_gone})
-check('dirty-worktree-blocks-recreate', dirty_plan['actions'][0]['action'] == 'block')
-check('dirty-worktree-reason', 'uncommitted' in dirty_plan['actions'][0]['reason'])
+check('dirty-worktree-preserve-work', dirty_plan['actions'][0]['action'] == 'preserve_work')
+check('dirty-worktree-reason', 'preserve' in dirty_plan['actions'][0]['reason'])
 
 limited_gone = make_worker(threadId=None)
 limited_obs = recovery_observation(
     limited_gone, thread_exists=False, thread_status=None, worktree_exists=False,
+    thread_absence_confirmed=True,
+    thread_absence_evidence='list_threads exact lookup returned not found',
+    branch_preserved=True, report_present=False, notes_present=False,
 )
-limited_obs.pop('head')
-limited_obs.pop('branch')
 limited_obs.pop('status_porcelain')
 limited_plan = build_next_actions(
     state_with([limited_gone], limits={'replacementPerRole': 0}),
