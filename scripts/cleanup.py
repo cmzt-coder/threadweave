@@ -1,15 +1,34 @@
 """Threadweave 清理分类参考实现。
 
-清理计划可附带观察时间；超过允许时效时返回 protect_stale。
+O16a 只生成清理计划和三级分类，不执行删除，也不调用宿主 API。
 
-
-对 worktree / branch / report / automation 给出幂等清理动作，并检查停止证据。
-纯函数，不执行删除，也不调用宿主 API；调用方必须依据动作再执行安全清理。
+SAFE: 已满足验收、干净、无未合并成果、报告归档、停止证据和归属检查。
+REVIEW: 证据缺失/陈旧，需要重新采集或人工确认。
+BLOCKED: 脏工作树、未合并成果、活动线程、primary/shared 或非本 run 资源。
 """
 
+CLEANUP_LEVELS = ('SAFE', 'REVIEW', 'BLOCKED')
 
-def classify_worktree_cleanup(observed, report_archived):
-    """返回 worktree 清理动作；缺失证据、非本 run、primary 一律保护。"""
+SAFE_ACTIONS = {'remove', 'delete', 'delete_source', 'already_removed'}
+REVIEW_ACTIONS = {'protect_unknown', 'protect_stale', 'protect_report',
+                  'protect_unverified', 'protect_acceptance_unknown'}
+BLOCKED_ACTIONS = {'protect_dirty', 'protect_unmerged', 'protect_active',
+                   'protect_shared', 'protect_not_owned', 'protect_checked_out',
+                   'protect_acceptance_failed'}
+
+
+def action_level(action):
+    if action in SAFE_ACTIONS:
+        return 'SAFE'
+    if action in BLOCKED_ACTIONS:
+        return 'BLOCKED'
+    return 'REVIEW'
+
+
+def classify_worktree_cleanup(observed, report_archived, acceptance_verified=None):
+    """返回 worktree 清理动作；缺失验收证据时只进入 REVIEW。"""
+    if acceptance_verified is None:
+        acceptance_verified = observed.get('acceptance_verified')
     if observed.get('worktree_exists') is None:
         return 'protect_unknown'
     if not observed.get('worktree_exists'):
@@ -24,6 +43,10 @@ def classify_worktree_cleanup(observed, report_archived):
         return 'protect_dirty'
     if observed.get('unmerged_commits'):
         return 'protect_unmerged'
+    if acceptance_verified is None:
+        return 'protect_acceptance_unknown'
+    if not acceptance_verified:
+        return 'protect_acceptance_failed'
     if not report_archived:
         return 'protect_report'
     stop = observed.get('stop', {})
@@ -72,11 +95,20 @@ def verify_stop_evidence(observed):
     return 'stopped' if all(observed.get(key) for key in required) else 'unverified'
 
 
+def _overall_level(resource_levels):
+    values = set(resource_levels.values())
+    if 'BLOCKED' in values:
+        return 'BLOCKED'
+    if 'REVIEW' in values:
+        return 'REVIEW'
+    return 'SAFE'
+
+
 def build_cleanup_plan(state, observations, max_evidence_age_seconds=None, now=None):
-    """为每个 worker 生成 worktree / branch / 停止证据动作。"""
+    """为每个 worker 生成 worktree / branch / stop 清理计划与三级分类。"""
     plan = {}
     for worker in state.get('workers', []):
-        key = f"{worker.get('role')}#{worker.get('attempt')}"
+        key = f"{worker.get('role')}#{worker.get('attempt', 1)}"
         observed = observations.get(key, {})
         if max_evidence_age_seconds is not None:
             from datetime import datetime
@@ -95,14 +127,40 @@ def build_cleanup_plan(state, observations, max_evidence_age_seconds=None, now=N
                     'worktree': 'protect_stale',
                     'branch': 'protect_stale',
                     'stop_evidence': 'unverified',
+                    'classification': 'REVIEW',
+                    'reasons': ['cleanup evidence is stale'],
+                    'resourceLevels': {
+                        'worktree': 'REVIEW', 'branch': 'REVIEW',
+                        'stop_evidence': 'REVIEW',
+                    },
                 }
                 continue
         worktree_observed = dict(observed.get('worktree', {}))
         worktree_observed.setdefault('stop', observed.get('stop', {}))
+        worktree_observed['acceptance_verified'] = observed.get('acceptance_verified')
+        worktree_action = classify_worktree_cleanup(
+            worktree_observed, observed.get('report_archived', False),
+            worktree_observed.get('acceptance_verified'))
+        branch_action = classify_branch_cleanup(observed.get('branch', {}))
+        stop_action = verify_stop_evidence(observed.get('stop', {}))
+        resource_levels = {
+            'worktree': action_level(worktree_action),
+            'branch': action_level(branch_action),
+            'stop_evidence': 'SAFE' if stop_action == 'stopped' else 'REVIEW',
+        }
+        reasons = []
+        for resource, action in (
+                ('worktree', worktree_action), ('branch', branch_action)):
+            if action not in SAFE_ACTIONS:
+                reasons.append(f'{resource}: {action}')
+        if stop_action != 'stopped':
+            reasons.append('stop_evidence: unverified')
         plan[key] = {
-            'worktree': classify_worktree_cleanup(
-                worktree_observed, observed.get('report_archived', False)),
-            'branch': classify_branch_cleanup(observed.get('branch', {})),
-            'stop_evidence': verify_stop_evidence(observed.get('stop', {})),
+            'worktree': worktree_action,
+            'branch': branch_action,
+            'stop_evidence': stop_action,
+            'classification': _overall_level(resource_levels),
+            'reasons': reasons,
+            'resourceLevels': resource_levels,
         }
     return plan

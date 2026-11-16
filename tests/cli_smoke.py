@@ -65,6 +65,7 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
     obs = d / 'obs.json'
     obs.write_text(json.dumps({
         'a#1': {
+            'acceptance_verified': True,
             'worktree': {
                 'worktree_exists': True, 'status_porcelain': '',
                 'unmerged_commits': False, 'worker_status': 'idle',
@@ -87,7 +88,13 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
               for run in inspect(repo)['runs']))
     plan = cleanup_plan(repo, 'run-2', obs)
     check('cleanup-plan-actions',
-          plan['a#1'] == {'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped'})
+          plan['a#1'] == {
+              'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped',
+              'classification': 'SAFE', 'reasons': [],
+              'resourceLevels': {
+                  'worktree': 'SAFE', 'branch': 'SAFE', 'stop_evidence': 'SAFE',
+              },
+          })
 
     bad_repo = d / 'not-git'
     bad_repo.mkdir()

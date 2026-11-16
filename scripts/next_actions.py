@@ -179,6 +179,9 @@ def _cleanup_missing(observed, state):
     issues, stale, _ = _freshness(observed, state)
     issues = list(issues)
 
+    if 'acceptance_verified' not in observed or observed.get('acceptance_verified') is None:
+        issues.append('acceptance_verified')
+
     worktree = observed.get('worktree')
     if not isinstance(worktree, dict):
         issues.append('worktree')
@@ -507,6 +510,8 @@ def _cleanup_actions(worker, observed, cleanup, state):
             priority=PRIORITY_MISSING_EVIDENCE,
             stale=stale,
             cleanupKind='evidence',
+            cleanupLevel='REVIEW',
+            cleanupReasons=['cleanup evidence is missing or stale'],
         )]
 
     stop = cleanup.get('stop_evidence')
@@ -519,6 +524,8 @@ def _cleanup_actions(worker, observed, cleanup, state):
             prerequisites=['thread_idle', 'final_answer_present', 'no_active_turn'],
             priority=PRIORITY_MISSING_EVIDENCE,
             cleanupKind='stop_evidence',
+            cleanupLevel='REVIEW',
+            cleanupReasons=['stop evidence is not verified'],
         )]
 
     actions = []
@@ -534,10 +541,14 @@ def _cleanup_actions(worker, observed, cleanup, state):
             priority=PRIORITY_CLEANUP,
             cleanupKind='worktree',
             cleanupAction=worktree_action,
+            cleanupLevel=cleanup.get('resourceLevels', {}).get('worktree'),
+            cleanupReasons=cleanup.get('reasons', []),
             authorizationRequired=True,
         ))
     elif worktree_action not in (None, 'already_removed'):
-        if worktree_action in ('protect_unknown', 'protect_stale'):
+        level = cleanup.get('resourceLevels', {}).get(
+            'worktree', 'REVIEW')
+        if level == 'REVIEW':
             action = 'revalidate'
             priority = PRIORITY_MISSING_EVIDENCE
         else:
@@ -549,6 +560,8 @@ def _cleanup_actions(worker, observed, cleanup, state):
             priority=priority,
             cleanupKind='worktree',
             cleanupAction=worktree_action,
+            cleanupLevel=level,
+            cleanupReasons=cleanup.get('reasons', []),
         ))
 
     branch_action = cleanup.get('branch')
@@ -563,6 +576,8 @@ def _cleanup_actions(worker, observed, cleanup, state):
             priority=PRIORITY_CLEANUP,
             cleanupKind='branch',
             cleanupAction=branch_action,
+            cleanupLevel=cleanup.get('resourceLevels', {}).get('branch'),
+            cleanupReasons=cleanup.get('reasons', []),
             authorizationRequired=True,
         ))
     elif branch_action not in (None, 'already_removed'):
@@ -578,6 +593,8 @@ def _cleanup_actions(worker, observed, cleanup, state):
             priority=priority,
             cleanupKind='branch',
             cleanupAction=branch_action,
+            cleanupLevel=cleanup.get('resourceLevels', {}).get('branch'),
+            cleanupReasons=cleanup.get('reasons', []),
         ))
     return actions
 

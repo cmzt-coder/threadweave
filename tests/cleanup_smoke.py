@@ -20,7 +20,7 @@ def check(name, condition):
 
 
 clean = {
-    'worktree_exists': True, 'status_porcelain': '',
+    'worktree_exists': True, 'acceptance_verified': True, 'status_porcelain': '',
     'unmerged_commits': False, 'worker_status': 'idle',
     'owned_by_run': True, 'is_primary': False,
     'stop': {
@@ -33,6 +33,12 @@ check('dirty-worktree-protected',
       classify_worktree_cleanup(dict(clean, status_porcelain='?? x'), True) == 'protect_dirty')
 check('unmerged-worktree-protected',
       classify_worktree_cleanup(dict(clean, unmerged_commits=True), True) == 'protect_unmerged')
+check('acceptance-missing-review',
+      classify_worktree_cleanup({**clean, 'acceptance_verified': None}, True)
+      == 'protect_acceptance_unknown')
+check('acceptance-failed-blocked',
+      classify_worktree_cleanup({**clean, 'acceptance_verified': False}, True)
+      == 'protect_acceptance_failed')
 check('report-missing-protected',
       classify_worktree_cleanup(clean, False) == 'protect_report')
 check('active-worker-protected',
@@ -96,6 +102,7 @@ state = {'workers': [{'role': 'a', 'attempt': 1}]}
 observations = {
     'a#1': {
         'worktree': clean,
+        'acceptance_verified': True,
         'report_archived': True,
         'branch': {
             'branch_exists': True, 'merged_into_integration': True,
@@ -110,6 +117,7 @@ stale_observations = {
     'a#1': {
         'observedAt': '2026-11-12T10:00:00+08:00',
         'worktree': clean,
+        'acceptance_verified': True,
         'report_archived': True,
         'branch': {
             'branch_exists': True, 'merged_into_integration': True,
@@ -125,8 +133,40 @@ stale_plan = build_cleanup_plan(
     now='2026-11-12T10:10:00+08:00')
 check('stale-cleanup-protected', stale_plan['a#1']['worktree'] == 'protect_stale')
 
-check('plan-actions',
-      plan['a#1'] == {'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped'})
+check('plan-actions', plan['a#1'] == {
+    'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped',
+    'classification': 'SAFE', 'reasons': [],
+    'resourceLevels': {'worktree': 'SAFE', 'branch': 'SAFE', 'stop_evidence': 'SAFE'},
+})
+review_observations = {
+    'a#1': {
+        'worktree': {**clean, 'acceptance_verified': None},
+        'report_archived': True,
+        'branch': {
+            'branch_exists': True, 'merged_into_integration': True,
+            'owned_by_run': True, 'checked_out': False,
+        },
+        'stop': {'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True},
+    }
+}
+review_plan = build_cleanup_plan(state, review_observations)
+check('plan-review-without-acceptance',
+      review_plan['a#1']['classification'] == 'REVIEW'
+      and review_plan['a#1']['worktree'] == 'protect_acceptance_unknown')
+blocked_observations = {
+    'a#1': {
+        'worktree': {**clean, 'status_porcelain': ' M a.txt'},
+        'acceptance_verified': True,
+        'report_archived': True,
+        'branch': {
+            'branch_exists': True, 'merged_into_integration': True,
+            'owned_by_run': True, 'checked_out': False,
+        },
+        'stop': {'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True},
+    }
+}
+blocked_plan = build_cleanup_plan(state, blocked_observations)
+check('plan-blocked-dirty', blocked_plan['a#1']['classification'] == 'BLOCKED')
 
 print(json.dumps({
     'passed': len(results),

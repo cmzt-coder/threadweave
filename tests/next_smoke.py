@@ -49,6 +49,7 @@ def make_worker(state='ready', **overrides):
 def recovery_observation(worker, **overrides):
     observed = {
         'observedAt': now(),
+        'acceptance_verified': True,
         'thread_exists': True,
         'thread_status': 'idle',
         'worktree_exists': True,
@@ -68,6 +69,7 @@ def recovery_observation(worker, **overrides):
 def cleanup_observation(worker, **overrides):
     observed = {
         'observedAt': now(),
+        'acceptance_verified': True,
         'thread_exists': True,
         'thread_status': 'archived',
         'worktree_exists': True,
