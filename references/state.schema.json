@@ -1109,6 +1109,55 @@
                 }
               }
             }
+          },
+          "handoffGate": {
+            "type": "object",
+            "required": [
+              "status",
+              "sourceThreadId",
+              "operationId",
+              "expected",
+              "reasons"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "pending",
+                  "blocked",
+                  "passed"
+                ]
+              },
+              "sourceThreadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "operationId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected": {
+                "type": "object"
+              },
+              "receipt": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "observation": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
           }
         }
       }

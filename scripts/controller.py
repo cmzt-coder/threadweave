@@ -17,6 +17,7 @@ from setup import SetupConfigError, load_setup_config, run_setup_command
 from failure import FAILURE_SOURCES, build_failure_record
 from recovery import build_preservation_record, verify_preservation_record
 from host_adapter import HostActionPending, HostAdapter
+from handoff_gate import begin_gate, evaluate_gate, require_gate
 from startup_gate import validate_startup
 from run_log import log_event
 from state_schema import validate_state
@@ -74,6 +75,7 @@ class Controller:
         self.save()
 
     def _ensure_external_action_allowed(self, worker, action):
+        require_gate(worker)
         run_status = self.state.get('status')
         if run_status in ('aborted', 'failed', 'complete', 'cleanup_pending'):
             raise RuntimeError(f'run is {run_status}; {action} blocked')
@@ -83,6 +85,63 @@ class Controller:
         intent = worker.get('dispatchIntent', {})
         if action == 'dispatch' and intent.get('result') in ('pending', 'unknown'):
             raise RuntimeError('unresolved dispatch intent; reconcile before retrying')
+
+    def begin_handoff_reconciliation(self, role, attempt, operation_id, expected):
+        """登记真实迁移操作后立即关闭派发门禁；不调用宿主迁移 API。"""
+        worker = self._worker(role, attempt)
+        if worker.get('handoffGate', {}).get('status') in ('pending', 'blocked'):
+            raise RuntimeError('existing unresolved handoff; reconcile instead of replacing it')
+        gate = begin_gate(worker.get('threadId'), operation_id, expected)
+        before = copy.deepcopy(self.state)
+        try:
+            worker['handoffGate'] = gate
+            self.save()
+        except Exception:
+            self.state.clear(); self.state.update(before)
+            raise
+        return copy.deepcopy(gate)
+
+    def reconcile_handoff(self, role, attempt, receipt, observation):
+        """核对目标新身份；模型 unknown 或不匹配时保持阻塞，不发送探测任务。"""
+        worker = self._worker(role, attempt)
+        if not worker.get('handoffGate'):
+            raise ValueError('handoff gate required')
+        previously_passed = worker['handoffGate'].get('status') == 'passed'
+        gate = evaluate_gate(worker['handoffGate'], receipt, observation)
+        if gate['status'] == 'passed':
+            try:
+                root = gate['expected']['root']
+                common = Path(self._git(root, 'rev-parse', '--git-common-dir'))
+                if not common.is_absolute():
+                    common = Path(root) / common
+                expected_common = Path(self._git(self.repo_root, 'rev-parse', '--git-common-dir'))
+                if not expected_common.is_absolute():
+                    expected_common = Path(self.repo_root) / expected_common
+                if (common.resolve() != expected_common.resolve()
+                        or self._git(root, 'rev-parse', '--show-toplevel') != root
+                        or self._git(root, 'branch', '--show-current') != gate['expected']['branch']
+                        or self._git(root, 'rev-parse', 'HEAD') != gate['expected']['head']
+                        or self._git(root, 'status', '--porcelain')):
+                    gate['status'] = 'blocked'
+                    gate['reasons'].append('direct_git_mismatch')
+            except (RuntimeError, OSError):
+                gate['status'] = 'blocked'
+                gate['reasons'].append('direct_git_unavailable')
+        before = copy.deepcopy(self.state)
+        try:
+            worker['handoffGate'] = gate
+            if gate['status'] == 'passed' and not previously_passed:
+                worker.update(threadId=gate['expected']['threadId'],
+                              worktree=gate['expected']['root'], branch=gate['expected']['branch'],
+                              state='validating', activityRevision=worker.get('activityRevision', 0) + 1)
+                for key in ('hostObservation', 'dispatchIntent', 'stopStatus', 'stopActivityRevision',
+                            'report', 'acceptance', 'verificationPlan', 'branchTip', 'startupReport'):
+                    worker.pop(key, None)
+            self.save()
+        except Exception:
+            self.state.clear(); self.state.update(before)
+            raise
+        return copy.deepcopy(gate)
 
     def _active_workers(self):
         """每个角色只保留 attempt 最大的有效 worker；历史记录继续审计。"""
@@ -282,6 +341,7 @@ class Controller:
     def _review_worker(self, role, attempt):
         """只审查当前有效任务；停止请求与终端 run 不允许继续推进。"""
         worker = self._worker(role, attempt)
+        require_gate(worker)
         if self._active_workers().get(role) is not worker:
             raise RuntimeError('not the active attempt')
         if self.state.get('status') in ('aborted', 'failed', 'complete', 'cleanup_pending'):
