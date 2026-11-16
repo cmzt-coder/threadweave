@@ -12,6 +12,7 @@ from pathlib import Path
 from cleanup import build_cleanup_plan
 from delivery import delivery_status
 from next_actions import build_next_actions
+from status_view import build_compact_status, build_delta_status, compact_json
 from state_store import latest_incomplete_run, locate_runs, read_state, run_state_path
 
 
@@ -146,6 +147,10 @@ def main(argv=None):
     p.add_argument('--repo', default='.')
     p = sub.add_parser('status')
     p.add_argument('--repo', default='.')
+    p.add_argument('--compact', action='store_true')
+    p.add_argument('--max-bytes', type=int, default=7000)
+    p.add_argument('--run')
+    p.add_argument('--since')
     p = sub.add_parser('inspect')
     p.add_argument('--repo', default='.')
     p = sub.add_parser('doctor')
@@ -165,6 +170,24 @@ def main(argv=None):
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if all(result.values()) else 1
     if args.command == 'status':
+        if args.compact or args.since:
+            try:
+                selected_run = args.run
+                if selected_run is None:
+                    latest = latest_incomplete_run(args.repo)
+                    selected_run = latest.get('runId') if latest else None
+                if args.since:
+                    if not selected_run:
+                        raise ValueError('no run found for --since')
+                    print(build_delta_status(
+                        args.repo, selected_run, cursor=args.since,
+                        max_bytes=args.max_bytes))
+                    return 0
+                print(compact_json(build_compact_status(args.repo, args.run), args.max_bytes))
+                return 0
+            except ValueError as exc:
+                print(f'error: {exc}', file=sys.stderr)
+                return 2
         result = status(args.repo)
     elif args.command == 'inspect':
         result = inspect(args.repo)
