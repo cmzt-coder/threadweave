@@ -31,6 +31,8 @@ def evaluate_gate(gate, receipt, observation, now=None):
     result = copy.deepcopy(gate)
     result.update(receipt=copy.deepcopy(receipt), observation=copy.deepcopy(observation))
     reasons = []
+    if gate.get('operationBound', True) is not True:
+        reasons.append('handoff_operation_not_bound')
     expected = gate['expected']
     if not isinstance(receipt, dict) or (receipt.get('operationId') != gate['operationId']
             or receipt.get('status') != 'success'

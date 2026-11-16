@@ -86,6 +86,44 @@ class Controller:
         if action == 'dispatch' and intent.get('result') in ('pending', 'unknown'):
             raise RuntimeError('unresolved dispatch intent; reconcile before retrying')
 
+    def prepare_handoff_intent(self, role, attempt, expected):
+        """在宿主调用前持久关闭派发；目标未知字段只能作为待核对占位。"""
+        from uuid import uuid4
+        worker = self._worker(role, attempt)
+        if worker.get('handoffGate', {}).get('status') in ('pending', 'blocked'):
+            raise RuntimeError('existing unresolved handoff')
+        gate = begin_gate(worker.get('threadId'), 'unbound:' + uuid4().hex, expected)
+        gate['operationBound'] = False
+        before = copy.deepcopy(self.state)
+        try:
+            worker['handoffGate'] = gate
+            self.save()
+        except Exception:
+            self.state.clear(); self.state.update(before)
+            raise
+        return copy.deepcopy(gate)
+
+    def bind_handoff_operation(self, role, attempt, operation_id, expected):
+        """取得真实 operationId/目标后绑定原意图，绝不自动重试迁移。"""
+        worker = self._worker(role, attempt)
+        previous = worker.get('handoffGate', {})
+        if previous.get('operationBound') is not False:
+            raise ValueError('unbound durable handoff intent required')
+        if not isinstance(operation_id, str) or not operation_id or operation_id.startswith('unbound:'):
+            raise ValueError('actual host operationId required')
+        if any(expected.get(k) != previous['expected'].get(k) for k in ('model', 'thinking', 'head')):
+            raise ValueError('handoff runtime or HEAD contract changed')
+        gate = begin_gate(previous['sourceThreadId'], operation_id, expected)
+        gate['operationBound'] = True
+        before = copy.deepcopy(self.state)
+        try:
+            worker['handoffGate'] = gate
+            self.save()
+        except Exception:
+            self.state.clear(); self.state.update(before)
+            raise
+        return copy.deepcopy(gate)
+
     def begin_handoff_reconciliation(self, role, attempt, operation_id, expected):
         """登记真实迁移操作后立即关闭派发门禁；不调用宿主迁移 API。"""
         worker = self._worker(role, attempt)

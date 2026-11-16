@@ -80,4 +80,16 @@ with tempfile.TemporaryDirectory() as td:
         try:restart.reconcile_handoff('a',1,receipt,{**obs,'runtime':{}})
         except OSError:pass
     check('save-failure-rolls-back',restart.state==before)
+with tempfile.TemporaryDirectory() as td:
+    state=json.loads((Path(__file__).resolve().parents[1]/'references/state.example.json').read_text())
+    state.update(runId='h01-intent',status='observing',revision=0)
+    state['workers']=[state['workers'][0]];state['workers'][0].update(threadId='source',state='ready')
+    c=Controller(UnsupportedHostAdapter(),td,'h01-intent',state);c.save()
+    intent=c.prepare_handoff_intent('a',1,expected)
+    check('pre-host-intent-persisted',read_state(c.state_path)['workers'][0]['handoffGate']['operationBound'] is False)
+    rejected('pre-host-dispatch-blocked',lambda:c.dispatch('a',1,'TASK',None,None))
+    rejected('pre-host-contract-cannot-change',lambda:c.bind_handoff_operation('a',1,'real-op',{**expected,'model':'other'}))
+    bound=c.bind_handoff_operation('a',1,'real-op',expected)
+    check('real-operation-bound',bound['operationId']=='real-op' and bound['operationBound'])
+    rejected('operation-cannot-rebind',lambda:c.bind_handoff_operation('a',1,'another',expected))
 print(json.dumps({'passed':len(checks),'checks':checks}))

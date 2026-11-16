@@ -1155,6 +1155,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "operationBound": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false
