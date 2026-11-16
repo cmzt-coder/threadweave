@@ -12,6 +12,7 @@ from pathlib import Path
 from cleanup import build_cleanup_plan, recheck_cleanup_plan
 from delivery import delivery_status
 from next_actions import build_next_actions
+from split_preview import build_split_preview
 from status_view import build_compact_status, build_delta_status, compact_json
 from state_store import latest_incomplete_run, locate_runs, read_state, run_state_path
 
@@ -101,6 +102,15 @@ def cleanup_plan(repo, run_id, observations_path):
     return build_cleanup_plan(state, observations)
 
 
+def split_preview(repo, input_path):
+    """读取声明输入，输出只读拆分冲突预演。"""
+    data = json.loads(Path(input_path).read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError('split preview input must be an object')
+    return build_split_preview(
+        data.get('workers'), data.get('serializedResources', []), repo)
+
+
 def cleanup_recheck(repo, run_id, plan_path, observations_path,
                     expected_fingerprint=None, max_evidence_age_seconds=300):
     """读取批准的计划和新 observations，只读重验清理是否仍可执行。"""
@@ -172,6 +182,9 @@ def main(argv=None):
     p.add_argument('--repo', default='.')
     p.add_argument('--run', required=True)
     p.add_argument('--observations', required=True)
+    p = sub.add_parser('split-preview')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--input', required=True)
     p = sub.add_parser('cleanup-recheck')
     p.add_argument('--repo', default='.')
     p.add_argument('--run', required=True)
@@ -217,6 +230,12 @@ def main(argv=None):
         try:
             result = next_plan(args.repo, args.run, args.observations)
         except ValueError as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            return 2
+    elif args.command == 'split-preview':
+        try:
+            result = split_preview(args.repo, args.input)
+        except (ValueError, OSError, TypeError) as exc:
             print(f'error: {exc}', file=sys.stderr)
             return 2
     elif args.command == 'cleanup-recheck':

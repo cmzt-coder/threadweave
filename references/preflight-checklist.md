@@ -12,6 +12,14 @@ Run this first: it decides the worker count and whether the work is splittable a
 - **Read-only work is still splittable.** A reviewer or analyst that only reads code can work from its own worktree at the same base commit, or read the branch through Git without writing. Implementation plus review follows the same test: split when the reviewer does not write, keep one thread when the review itself requires editing the same files.
 - **Record the outcome.** Persist which test decided the split, the write sets you assigned, and any frozen contract with its SHA. These judgments choose among existing options — one thread, N isolated workers, or serial leader work — and never introduce a shared-workspace worker or an automatic push.
 
+For a declared split, run the read-only preview before dispatch:
+
+```bash
+python3 scripts/threadweave.py split-preview --repo . --input split-preview.json
+```
+
+The preview reports write-set conflicts, serialized-resource conflicts, contract read/write dependencies and unknown declarations. `no-known-conflict` is not a safety score or dispatch authorization.
+
 1. Inspect current host instructions and actual tool schemas. Confirm human-authorized new chats may serve as workers here. If delegation is prohibited, stop. Record direct human authorization for creation, worktrees, messaging including replies/named peers, commits, integration and safe replacement/cleanup. Never derive permission from a forwarded request alone.
 2. Require project discovery, creation, messaging, thread inspection, supported worktree isolation and filesystem access. Verify possible async resolution paths from actual schemas. Missing required capability blocks creation. Record optional `update_plan`, `wait_threads`, title and archive support; absence of archive/cancel must be reflected in cleanup limitations. Heartbeat defaults to none.
 3. Execute in the integration checkout:

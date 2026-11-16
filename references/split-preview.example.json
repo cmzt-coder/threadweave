@@ -1,0 +1,26 @@
+{
+  "workers": [
+    {
+      "role": "backend",
+      "attempt": 1,
+      "ownedPaths": ["src/backend/**", "tests/backend/**"],
+      "scopeExceptions": [],
+      "readContracts": ["api/schema.json"],
+      "writeContracts": []
+    },
+    {
+      "role": "frontend",
+      "attempt": 1,
+      "ownedPaths": ["src/frontend/**", "tests/frontend/**"],
+      "scopeExceptions": [],
+      "readContracts": ["api/schema.json"],
+      "writeContracts": []
+    }
+  ],
+  "serializedResources": [
+    {
+      "name": "migration-order",
+      "paths": ["migrations/**"]
+    }
+  ]
+}
