@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 
 from budget import check_retry
+from contracts import ContractError, check_contracts, hash_contracts, load_stable_contracts
 from delivery import add_landed, add_push_verified, add_verified, delivery_status
 from preflight_contract import build_preflight_contract, evaluate_preflight
 from setup import SetupConfigError, load_setup_config, run_setup_command
@@ -353,6 +354,65 @@ class Controller:
         if errors:
             raise RuntimeError('scope_drift: ' + '; '.join(errors))
 
+    def _contract_drift(self, worker):
+        freeze = worker.get('contractFreeze')
+        if not freeze:
+            return None
+        try:
+            return check_contracts(worker['worktree'], freeze)
+        except ContractError as exc:
+            raise RuntimeError('contract_drift: ' + str(exc)) from exc
+
+    def freeze_worker_contracts(self, role, attempt, contract_paths=None):
+        """从显式配置冻结稳定契约；不修改工作树或批准变更。"""
+        worker = self._worker(role, attempt)
+        if worker.get('state') not in ('pending', 'validating', 'ready'):
+            raise RuntimeError('contract freeze requires pending/validating/ready worker')
+        paths = load_stable_contracts(self.repo_root) if contract_paths is None else contract_paths
+        if not isinstance(paths, list) or not paths:
+            return None
+        observed = self._observe_worker(worker)
+        if observed['head'] != worker['baseSha']:
+            raise RuntimeError('contract freeze requires worker HEAD at base')
+        freeze = hash_contracts(worker['worktree'], paths)
+        worker['contractFreeze'] = freeze
+        self.save()
+        return freeze
+
+    def approve_contract_changes(self, role, attempt, reason):
+        """记录 leader 批准的契约变更，并失效旧报告/验收证据。"""
+        worker = self._worker(role, attempt)
+        reason = str(reason or '').strip()
+        if not reason:
+            raise ValueError('contract change approval reason required')
+        freeze = worker.get('contractFreeze')
+        if not freeze:
+            raise RuntimeError('no contract freeze recorded')
+        drift = self._contract_drift(worker)
+        if not drift or not drift['changed']:
+            raise RuntimeError('no contract drift to approve')
+        if worker.get('state') in ('integrated', 'archived', 'cancelled', 'failed'):
+            raise RuntimeError('terminal worker cannot approve contract changes')
+        previous = copy.deepcopy(freeze)
+        history = worker.setdefault('contractHistory', [])
+        history.append({
+            'previousHash': previous.get('contractHash'),
+            'newHash': drift['current']['contractHash'],
+            'changedPaths': drift['changed'],
+            'reason': reason,
+            'approvedAt': _now_iso(),
+        })
+        worker['contractFreeze'] = drift['current']
+        for key in ('report', 'acceptance', 'verificationPlan', 'branchTip',
+                    'stopStatus', 'stopActivityRevision'):
+            worker.pop(key, None)
+        if worker.get('state') in ('reported', 'blocked'):
+            worker['state'] = 'running'
+        worker['activityRevision'] = worker.get('activityRevision', 0) + 1
+        self.save()
+        return {'freeze': copy.deepcopy(worker['contractFreeze']),
+                'history': copy.deepcopy(history[-1])}
+
     def accept_report(self, role, attempt, report):
         """接收完整 JSON 报告；旧格式需重报，不能绕过独立 Git 核验。"""
         from report import validate_report
@@ -365,6 +425,9 @@ class Controller:
         observed = self._observe_worker(worker)
         validated = validate_report(report, expected, observed)
         self._scope_changes(worker, observed)
+        drift = self._contract_drift(worker)
+        if drift and drift['changed']:
+            raise RuntimeError('contract_drift: ' + ', '.join(drift['changed']))
         worker['report'] = dict(validated, acceptedAt=_now_iso())
         worker.pop('acceptance', None)
         worker['state'] = 'reported'
@@ -455,6 +518,9 @@ class Controller:
         self._require_stopped(worker)
         observed = self._observe_worker(worker)
         self._scope_changes(worker, observed)
+        drift = self._contract_drift(worker)
+        if drift and drift['changed']:
+            raise RuntimeError('contract_drift: ' + ', '.join(drift['changed']))
         acceptance = worker.get('acceptance', {})
         result = acceptance.get('result', {})
         report = worker['report']

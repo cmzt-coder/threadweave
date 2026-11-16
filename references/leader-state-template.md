@@ -51,6 +51,12 @@ Dependency map:
 Decision log:
 - <decision>
 
+Contract freeze:
+- stableContracts / per-file SHA256 / contractHash:
+- Freeze time / worker branch / base SHA:
+- Drift detected or none:
+- Approved contract change reason / old-new hash / new taskRevision:
+
 Setup evidence:
 - Config path / hash:
 - argv / cwd / timeout / failure policy / idempotent:

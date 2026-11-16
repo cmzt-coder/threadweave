@@ -1036,6 +1036,79 @@
                 }
               }
             }
+          },
+          "contractFreeze": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "paths",
+              "hashes",
+              "contractHash",
+              "frozenAt"
+            ],
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "hashes": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "contractHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "frozenAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "contractHistory": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "previousHash",
+                "newHash",
+                "changedPaths",
+                "reason",
+                "approvedAt"
+              ],
+              "properties": {
+                "previousHash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "newHash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "changedPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "approvedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
           }
         }
       }

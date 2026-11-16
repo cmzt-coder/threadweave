@@ -1,7 +1,15 @@
 {
   "setup": {
     "version": 1,
-    "argv": ["/usr/bin/env", "python3", "-m", "pip", "install", "-r", "requirements.txt"],
+    "argv": [
+      "/usr/bin/env",
+      "python3",
+      "-m",
+      "pip",
+      "install",
+      "-r",
+      "requirements.txt"
+    ],
     "cwd": ".",
     "timeoutSeconds": 900,
     "failurePolicy": "block",
@@ -10,7 +18,12 @@
   "serializedResources": [
     {
       "name": "migration-order",
-      "paths": ["migrations/**"]
+      "paths": [
+        "migrations/**"
+      ]
     }
+  ],
+  "stableContracts": [
+    "api/schema.json"
   ]
 }
