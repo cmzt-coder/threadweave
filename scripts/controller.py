@@ -12,6 +12,7 @@ import subprocess
 from budget import check_retry
 from delivery import add_landed, add_push_verified, add_verified, delivery_status
 from preflight_contract import build_preflight_contract, evaluate_preflight
+from setup import SetupConfigError, load_setup_config, run_setup_command
 from failure import FAILURE_SOURCES, build_failure_record
 from recovery import build_preservation_record, verify_preservation_record
 from host_adapter import HostActionPending, HostAdapter
@@ -710,6 +711,124 @@ class Controller:
             authorization_evidence=authorization_evidence, observed_at=observed_at)
         self.save()
         return record
+
+    def _setup_git_observation(self, worker):
+        root = Path(worker.get('worktree') or '').resolve()
+        if not root.is_dir():
+            raise RuntimeError('worker worktree unavailable for setup')
+        common = Path(self._git(root, 'rev-parse', '--path-format=absolute',
+                                '--git-common-dir')).resolve()
+        return {
+            'workerRoot': str(root),
+            'gitCommonDir': str(common),
+            'branch': self._git(root, 'symbolic-ref', '--short', 'HEAD'),
+            'head': self._git(root, 'rev-parse', 'HEAD'),
+            'statusPorcelain': self._git(root, 'status', '--porcelain=v1',
+                                         '--untracked-files=all'),
+            'observedAt': _now_iso(),
+        }
+
+    def run_worker_setup(self, role, attempt, config_path=None):
+        """执行显式 setup；失败只记录并阻断，不自动重试或重置文件。"""
+        worker = self._worker(role, attempt)
+        if worker.get('state') not in ('pending', 'validating'):
+            raise RuntimeError('setup requires pending/validating worker')
+        config = load_setup_config(self.repo_root, config_path)
+        if config is None:
+            return {'status': 'not_configured', 'ran': False}
+        existing = worker.get('setupEvidence')
+        if (isinstance(existing, dict) and existing.get('status') == 'passed'
+                and existing.get('configHash') == config['configHash']):
+            return dict(existing, reused=True)
+        try:
+            result = run_setup_command(worker['worktree'], config)
+            observation = self._setup_git_observation(worker)
+        except (SetupConfigError, OSError, RuntimeError) as exc:
+            code = 'setup_observation_failed'
+            failure = build_failure_record(
+                source='workspace_setup', code=code, stage='setup',
+                message=str(exc), scope=f'{role}#{attempt}',
+                result_certainty='confirmed_failure', retryable=False,
+                evidence='setup command/observation did not complete with a verifiable worker identity')
+            snapshot = copy.deepcopy(self.state)
+            try:
+                worker['setupStatus'] = 'failed'
+                worker.setdefault('errors', []).append({
+                    'code': code, 'message': str(exc), 'at': _now_iso()})
+                self.state.setdefault('errors', []).append(failure)
+                self.save()
+            except Exception:
+                self.state.clear()
+                self.state.update(snapshot)
+                raise
+            return {'status': 'failed', 'ran': True, 'code': code, 'message': str(exc)}
+        worker_root = observation['workerRoot']
+        expected_status = {
+            'workerRoot': str(Path(worker['worktree']).resolve()),
+            'gitCommonDir': self.state['project']['commonDirectory'],
+            'branch': worker['branch'],
+            'head': worker['baseSha'],
+        }
+        mismatches = []
+        if worker_root != expected_status['workerRoot']:
+            mismatches.append('worktree_root_mismatch')
+        if Path(observation['gitCommonDir']).resolve() != Path(expected_status['gitCommonDir']).resolve():
+            mismatches.append('git_common_dir_mismatch')
+        if observation['branch'] != expected_status['branch']:
+            mismatches.append('branch_mismatch')
+        if observation['head'] != expected_status['head']:
+            mismatches.append('head_not_base')
+        if observation['statusPorcelain']:
+            mismatches.append('dirty_worktree')
+        passed = result['status'] == 'passed' and not mismatches
+        evidence = {
+            'status': 'passed' if passed else 'failed',
+            'configHash': config['configHash'],
+            'configPath': config['configPath'],
+            'argv': config['argv'],
+            'cwd': result['cwd'],
+            'timeoutSeconds': config['timeoutSeconds'],
+            'failurePolicy': config['failurePolicy'],
+            'idempotent': config['idempotent'],
+            'exitCode': result['exitCode'],
+            'timedOut': result['timedOut'],
+            'outputTruncated': result['outputTruncated'],
+            'stdoutSha256': result['stdoutSha256'],
+            'stderrSha256': result['stderrSha256'],
+            'stdoutBytes': result['stdoutBytes'],
+            'stderrBytes': result['stderrBytes'],
+            'startedAt': result['startedAt'],
+            'finishedAt': result['finishedAt'],
+            'workerRoot': worker_root,
+            'branch': observation['branch'],
+            'head': observation['head'],
+            'statusPorcelain': observation['statusPorcelain'],
+            'observedAt': observation['observedAt'],
+            'checks': mismatches,
+        }
+        snapshot = copy.deepcopy(self.state)
+        try:
+            worker['setupEvidence'] = evidence
+            worker['setupStatus'] = evidence['status']
+            if not passed:
+                code = ('setup_timeout' if result['timedOut']
+                        else ('setup_dirty_worktree' if observation['statusPorcelain']
+                              else 'setup_failed'))
+                failure = build_failure_record(
+                    source='workspace_setup', code=code, stage='setup',
+                    message='setup failed: ' + (', '.join(mismatches) or result['status']),
+                    scope=f'{role}#{attempt}', result_certainty='confirmed_failure',
+                    retryable=bool(config['idempotent']),
+                    evidence='explicit setup configuration; no automatic retry performed')
+                worker.setdefault('errors', []).append({
+                    'code': code, 'message': failure['message'], 'at': _now_iso()})
+                self.state.setdefault('errors', []).append(failure)
+            self.save()
+        except Exception:
+            self.state.clear()
+            self.state.update(snapshot)
+            raise
+        return evidence
 
     def record_preflight_contract(self, run_inputs, worker_inputs):
         """持久化分层 preflight 契约；不执行环境探测或宿主调用。"""

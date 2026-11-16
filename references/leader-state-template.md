@@ -51,6 +51,13 @@ Dependency map:
 Decision log:
 - <decision>
 
+Setup evidence:
+- Config path / hash:
+- argv / cwd / timeout / failure policy / idempotent:
+- Result / exit code / timeout / output hashes:
+- Post-setup worker root / branch / HEAD / clean status:
+- Startup evidence recollected and still fresh: yes/no/n-a
+
 Polling state:
 - Phase 4 mode: post-dispatch-observation/event-wait/bounded-status/complete
 - Heartbeat automation: <id, or none / deleted>

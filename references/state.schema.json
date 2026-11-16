@@ -900,6 +900,142 @@
                 "format": "date-time"
               }
             }
+          },
+          "setupStatus": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed"
+            ]
+          },
+          "setupEvidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "configHash",
+              "configPath",
+              "argv",
+              "cwd",
+              "timeoutSeconds",
+              "failurePolicy",
+              "idempotent",
+              "exitCode",
+              "timedOut",
+              "outputTruncated",
+              "stdoutSha256",
+              "stderrSha256",
+              "stdoutBytes",
+              "stderrBytes",
+              "startedAt",
+              "finishedAt",
+              "workerRoot",
+              "branch",
+              "head",
+              "statusPorcelain",
+              "observedAt",
+              "checks"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "configHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "configPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "failurePolicy": {
+                "const": "block"
+              },
+              "idempotent": {
+                "const": true
+              },
+              "exitCode": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "timedOut": {
+                "type": "boolean"
+              },
+              "outputTruncated": {
+                "type": "boolean"
+              },
+              "stdoutSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "stderrSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "stdoutBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stderrBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "finishedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "workerRoot": {
+                "type": "string",
+                "minLength": 1
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "statusPorcelain": {
+                "type": "string"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           }
         }
       }

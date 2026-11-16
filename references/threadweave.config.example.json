@@ -1,0 +1,16 @@
+{
+  "setup": {
+    "version": 1,
+    "argv": ["/usr/bin/env", "python3", "-m", "pip", "install", "-r", "requirements.txt"],
+    "cwd": ".",
+    "timeoutSeconds": 900,
+    "failurePolicy": "block",
+    "idempotent": true
+  },
+  "serializedResources": [
+    {
+      "name": "migration-order",
+      "paths": ["migrations/**"]
+    }
+  ]
+}
