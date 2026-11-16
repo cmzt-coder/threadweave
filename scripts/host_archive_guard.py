@@ -1,4 +1,4 @@
-"""O16 宿主归档完成审计；依赖宿主执行时保护，但本模块不调用宿主、不删除资源。"""
+"""O16 宿主归档完成观察；保护被委托给宿主，本模块不调用宿主、不删除资源。"""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -78,10 +78,15 @@ def verify_host_archive(spec, *, now=None):
         'readOnly': True,
         'deletionPerformed': False,
         'cleanupEligible': False,
-        'completionVerified': False,
+        'completionEvidenceVerified': False,
         'hostArchiveCompleted': False,
         'preObservableProtection': False,
-        'protectionBasis': None,
+        'protectionDelegation': None,
+        'protectionEnforcementVerified': False,
+        'callerContinuityVerified': False,
+        'approvalBindingVerified': False,
+        'preInventoryShapeVerified': False,
+        'postArchiveTransitionObserved': False,
         'unknown': ['ownerThreadId', 'isPrimary', 'isShared', 'callingThreadId'],
     }
     try:
@@ -118,8 +123,8 @@ def verify_host_archive(spec, *, now=None):
         journal = BridgeJournal(repository, spec['runId'])
         archive_record, archive_result = _operation(
             journal, spec['archiveOperation'], spec['archiveRaw'], ARCHIVE_WORKTREE, binding)
-        if spec.get('archiveRequestSha') != archive_record.get('requestSha'):
-            raise ValueError('approved archive request hash mismatch')
+        if spec.get('expectedArchiveRequestSha') != archive_record.get('requestSha'):
+            raise ValueError('expected archive request hash mismatch')
         if archive_record.get('request', {}).get('params') != {'root': worktree}:
             raise ValueError('archive request does not target exact worktree')
         # 仅为历史实证的宿主签发格式；queued 是受理，不是删除完成。
@@ -172,11 +177,12 @@ def verify_host_archive(spec, *, now=None):
             raise ValueError('archived worktree remains in Git registration')
 
         result.update(
-            status='host_archive_verified',
-            completionVerified=True,
+            status='host_archive_completion_observed',
+            completionEvidenceVerified=True,
             hostArchiveCompleted=True,
-            protectionBasis=PROTECTION_POLICY,
-            callerInventoryScopeVerified=True,
+            protectionDelegation=PROTECTION_POLICY,
+            preInventoryShapeVerified=True,
+            postArchiveTransitionObserved=True,
             binding=binding,
             worktree=worktree,
             proof={
@@ -191,9 +197,9 @@ def verify_host_archive(spec, *, now=None):
                 'completionInventoryToolResultSha': completion_record['response']['toolResultSha'],
                 'completionInventoryObservedAt': completion_record['response']['observedAt'],
             },
-            reason=('host archive completion verified by current-caller attachment scope, '
-                    'archive receipt, archived attachment and local absence; '
-                    'pre-observable ownership/protection remains unknown'))
+            reason=('host archive completion observed through bound receipts, archived attachment '
+                    'and local absence; caller continuity, approval and protection enforcement '
+                    'remain unverified'))
     except (ValueError, KeyError, TypeError, OSError) as exc:
         result['reason'] = str(exc)
     return result
@@ -209,7 +215,7 @@ def main(argv=None):
         result = {'status': 'blocked', 'readOnly': True, 'cleanupEligible': False,
                   'deletionPerformed': False, 'reason': str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result['status'] == 'host_archive_verified' else 1
+    return 0 if result['status'] == 'host_archive_completion_observed' else 1
 
 
 if __name__ == '__main__':

@@ -111,19 +111,22 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
         'preInventoryRaw': str(pre_path),
         'archiveOperation': 'archive',
         'archiveRaw': str(archive_path),
-        'archiveRequestSha': archive_record['requestSha'],
+        'expectedArchiveRequestSha': archive_record['requestSha'],
         'completionInventoryOperation': 'completion-inventory',
         'completionInventoryRaw': str(completion_path),
     }
 
     result = verify_host_archive(spec)
-    check('completed-archive-verified', result['status'] == 'host_archive_verified'
-          and result['completionVerified'] is True and result['hostArchiveCompleted'] is True)
+    check('archive-completion-observed', result['status'] == 'host_archive_completion_observed'
+          and result['completionEvidenceVerified'] is True and result['hostArchiveCompleted'] is True)
     check('completion-does-not-grant-cleanup', result['cleanupEligible'] is False
           and result['deletionPerformed'] is False
           and result['preObservableProtection'] is False)
-    check('protection-basis-explicit', result['protectionBasis'] == PROTECTION_POLICY)
-    check('caller-scope-verified', result['callerInventoryScopeVerified'] is True)
+    check('protection-delegation-explicit', result['protectionDelegation'] == PROTECTION_POLICY)
+    check('protection-enforcement-not-claimed', result['protectionEnforcementVerified'] is False)
+    check('caller-continuity-not-claimed', result['callerContinuityVerified'] is False)
+    check('approval-not-claimed', result['approvalBindingVerified'] is False)
+    check('pre-inventory-shape-verified', result['preInventoryShapeVerified'] is True)
     check('unknown-ownership-preserved', result['unknown'] == [
         'ownerThreadId', 'isPrimary', 'isShared', 'callingThreadId'])
 
@@ -138,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
     blocked('wrong-attempt-binding', {**spec, 'attempt': 2})
     blocked('wrong-task-revision', {**spec, 'taskRevision': 3})
     blocked('wrong-created-revision', {**spec, 'createdTaskRevision': 1})
-    blocked('missing-approved-archive-hash', {**spec, 'archiveRequestSha': 'different'})
+    blocked('wrong-expected-archive-hash', {**spec, 'expectedArchiveRequestSha': 'different'})
     blocked('wrong-repository', {**spec, 'repository': str(base / 'other')})
     blocked('wrong-worktree', {**spec, 'worktree': str(base / 'other')})
 
@@ -177,7 +180,7 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
         'archive-unknown', lambda a: a.archive_worktree(str(worktree)), {'type': 'unknown'}, archive=True)
     blocked('unknown-archive-result', {**spec, 'archiveOperation': 'archive-unknown',
                                        'archiveRaw': str(bad_archive_path),
-                                       'archiveRequestSha': adapter('archive-unknown', archive=True).journal.inspect('archive-unknown')['requestSha']})
+                                       'expectedArchiveRequestSha': adapter('archive-unknown', archive=True).journal.inspect('archive-unknown')['requestSha']})
     blocked('stale-completion', spec, now=datetime.now(timezone.utc) + timedelta(seconds=31))
 
     # 目录先被外部删除但 Git 注册仍在时，不能把队列回执当成清理完成。
