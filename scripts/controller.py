@@ -11,6 +11,7 @@ import subprocess
 
 from budget import check_retry
 from delivery import add_landed, add_push_verified, add_verified, delivery_status
+from preflight_contract import build_preflight_contract, evaluate_preflight
 from failure import FAILURE_SOURCES, build_failure_record
 from recovery import build_preservation_record, verify_preservation_record
 from host_adapter import HostActionPending, HostAdapter
@@ -709,6 +710,23 @@ class Controller:
             authorization_evidence=authorization_evidence, observed_at=observed_at)
         self.save()
         return record
+
+    def record_preflight_contract(self, run_inputs, worker_inputs):
+        """持久化分层 preflight 契约；不执行环境探测或宿主调用。"""
+        contract = build_preflight_contract(
+            self.run_id, run_inputs, worker_inputs)
+        self.state['preflight'] = contract
+        self.save()
+        return contract
+
+    def evaluate_preflight_contract(self, current_run_inputs, current_worker_inputs,
+                                    run_evidence_at=None, worker_evidence_at=None,
+                                    max_age_seconds=None, now=None):
+        return evaluate_preflight(
+            self.state.get('preflight'), current_run_inputs, current_worker_inputs,
+            run_evidence_at=run_evidence_at,
+            worker_evidence_at=worker_evidence_at,
+            max_age_seconds=max_age_seconds, now=now)
 
     def delivery_status(self, current_sha=None):
         return delivery_status(self.state, current_sha)

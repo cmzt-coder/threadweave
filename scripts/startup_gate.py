@@ -28,6 +28,9 @@ def validate_startup(report, expected):
         reasons.append('branch_mismatch')
     if report['head'].strip() != expected['base'].strip():
         reasons.append('head_not_base')
+    expected_preflight = expected.get('preflight_id')
+    if expected_preflight is not None and report.get('preflight_id') != expected_preflight:
+        reasons.append('preflight_id_mismatch')
     expected_root = expected.get('worker_root')
     if expected_root is not None and root != canonical(expected_root):
         reasons.append('worktree_root_mismatch')
