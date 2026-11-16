@@ -684,6 +684,38 @@ with tempfile.TemporaryDirectory() as d:
     check('integrate-worker-state', integrated_saved['workers'][0]['state'] == 'integrated')
     check('integration-log-recorded',
           integrated_saved['integrationLog'][0]['result'] == 'merged')
+    check('delivery-verified-recorded',
+          len(integrated_saved['delivery']['verified']) == 2)
+    check('delivery-landed-recorded',
+          len(integrated_saved['delivery']['landed']) == 1
+          and integrated_saved['delivery']['landed'][0]['sha'] == 'e' * 40)
+    check('delivery-stage-landed',
+          report_controller.delivery_status()['stage'] == 'landed')
+    try:
+        report_controller.record_push_verification(
+            'e' * 40, 'origin', 'refs/heads/main', 'f' * 40, 'test')
+        check('delivery-remote-sha-mismatch-rejected', False)
+    except ValueError:
+        check('delivery-remote-sha-mismatch-rejected', True)
+    original_git = report_controller._git
+    report_controller._git = lambda *args: (_ for _ in ()).throw(RuntimeError('missing remote'))
+    try:
+        report_controller.record_push_verification(
+            'e' * 40, 'missing', 'refs/heads/main', 'e' * 40, 'test')
+        check('delivery-missing-remote-rejected', False)
+    except ValueError:
+        check('delivery-missing-remote-rejected', True)
+    report_controller._git = original_git
+    report_controller.record_push_verification(
+        'e' * 40, 'origin', 'refs/heads/main', 'e' * 40,
+        'user explicitly requested push in this turn')
+    pushed_saved = read_state(run_state_path(d, 'run-report'))
+    check('delivery-push-recorded',
+          len(pushed_saved['delivery']['pushVerified']) == 1)
+    check('delivery-stage-push-verified',
+          report_controller.delivery_status()['stage'] == 'pushVerified')
+    check('delivery-new-head-stale',
+          report_controller.delivery_status('f' * 40)['stage'] == 'unverified')
 
     no_log_state = make_state('run-no-log')
     no_log_state['workers'][0]['state'] = 'reported'

@@ -1439,6 +1439,161 @@
           }
         }
       }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified",
+        "landed",
+        "pushVerified"
+      ],
+      "properties": {
+        "verified": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "stage",
+              "role",
+              "attempt",
+              "taskRevision",
+              "sha",
+              "verifiedAt"
+            ],
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "worker",
+                  "integration"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "taskRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "reportSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "planHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "verifiedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "landed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "branch",
+              "sha",
+              "beforeSha",
+              "taskRevision",
+              "planHash",
+              "verification",
+              "landedAt"
+            ],
+            "properties": {
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "beforeSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "taskRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "planHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "verification": {
+                "type": "string",
+                "minLength": 1
+              },
+              "landedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "pushVerified": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sha",
+              "remote",
+              "ref",
+              "remoteSha",
+              "observedAt",
+              "authorizationEvidence",
+              "recordedAt"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "remote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "remoteSha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "authorizationEvidence": {
+                "type": "string",
+                "minLength": 1
+              },
+              "recordedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -70,6 +70,13 @@ Merge order:
 Integration log:
 - <branch>: <pre-merge review result> / <merge result> / <per-merge verification result>
 
+Delivery status:
+- Verified records: <worker/integration stage, role#attempt, taskRevision, SHA, reportSha, planHash, time>
+- Landed records: <branch, SHA, beforeSha, taskRevision, planHash, time>
+- Push verified records: <not requested/observed or remote, ref, remoteSha, observedAt, authorization evidence>
+- Current stage: <unverified/verified/landed/pushVerified>
+- Stale records: <older SHA records retained for audit but not current>
+
 Final review:
 - pending/complete/failed/aborted/cleanup_pending (<reason>)
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 
 from budget import check_retry
+from delivery import add_landed, add_push_verified, add_verified, delivery_status
 from failure import FAILURE_SOURCES, build_failure_record
 from recovery import build_preservation_record, verify_preservation_record
 from host_adapter import HostActionPending, HostAdapter
@@ -415,6 +416,11 @@ class Controller:
         if result['status'] != 'passed':
             self._block_integration(worker, result)
             raise RuntimeError('worker acceptance failed')
+        add_verified(
+            self.state, stage='worker', role=role, attempt=attempt,
+            task_revision=worker.get('activityRevision', 0),
+            sha=observed['head'], report_sha=report['reportSha'],
+            plan_hash=result.get('planHash'))
         self.save()
         return result
 
@@ -476,6 +482,15 @@ class Controller:
             'verification': 'independent acceptance passed',
             'beforeSha': before, 'afterSha': head, 'acceptance': integrated,
         })
+        add_verified(
+            self.state, stage='integration', role=role, attempt=attempt,
+            task_revision=worker.get('activityRevision', 0),
+            sha=head, report_sha=report['reportSha'],
+            plan_hash=integrated.get('planHash'))
+        add_landed(
+            self.state, branch=worker['branch'], sha=head, before_sha=before,
+            task_revision=worker.get('activityRevision', 0),
+            plan_hash=integrated.get('planHash'))
         self.state['integration']['currentSha'] = head
         self.transition_worker(role, attempt, 'integrated')
         return self.state['integrationLog'][-1]
@@ -677,6 +692,26 @@ class Controller:
             self.state.update(before)
             raise
         return copy.deepcopy(observation)
+
+    def record_push_verification(self, sha, remote, ref, remote_sha,
+                                 authorization_evidence, observed_at=None):
+        """记录已观察到的远端 SHA；不执行 push，也不改变本地 HEAD。"""
+        current = self.state.get('integration', {}).get(
+            'currentSha', self.state.get('integration', {}).get('baseSha'))
+        if sha != current:
+            raise RuntimeError('push verification must bind current integration SHA')
+        try:
+            self._git(self.repo_root, 'remote', 'get-url', remote)
+        except RuntimeError as exc:
+            raise ValueError('remote is not configured') from exc
+        record = add_push_verified(
+            self.state, sha=sha, remote=remote, ref=ref, remote_sha=remote_sha,
+            authorization_evidence=authorization_evidence, observed_at=observed_at)
+        self.save()
+        return record
+
+    def delivery_status(self, current_sha=None):
+        return delivery_status(self.state, current_sha)
 
     def record_capabilities(self):
         self.state['hostCapabilities'] = self.capability_snapshot()

@@ -82,6 +82,9 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
         'schemaVersion': '1.0', 'runId': 'run-2', 'status': 'final-review',
         'workers': [{'role': 'a', 'attempt': 1}],
     })
+    check('inspect-delivery-stage',
+          any(run.get('runId') == 'run-2' and run.get('deliveryStage') == 'unverified'
+              for run in inspect(repo)['runs']))
     plan = cleanup_plan(repo, 'run-2', obs)
     check('cleanup-plan-actions',
           plan['a#1'] == {'worktree': 'remove', 'branch': 'delete', 'stop_evidence': 'stopped'})

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from cleanup import build_cleanup_plan
+from delivery import delivery_status
 from next_actions import build_next_actions
 from state_store import latest_incomplete_run, locate_runs, read_state, run_state_path
 
@@ -56,10 +57,13 @@ def inspect(repo):
         if not isinstance(workers, list):
             details.append({'runId': run['runId'], 'status': 'invalid', 'workers': []})
             continue
+        delivery = delivery_status(state)
         details.append({
             'runId': run['runId'],
             'status': state.get('status'),
             'revision': state.get('revision', 0),
+            'currentSha': delivery.get('currentSha'),
+            'deliveryStage': delivery.get('stage'),
             'workers': [
                 {'role': w.get('role'), 'attempt': w.get('attempt'), 'state': w.get('state')}
                 for w in workers

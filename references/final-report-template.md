@@ -22,6 +22,14 @@ Merge order:
 1. <worker branch> - <merge result> - <per-merge verification result>
 2. <worker branch> - <merge result> - <per-merge verification result>
 
+Delivery status:
+- Current HEAD: <sha>
+- Verified: <worker/integration stage, SHA, reportSha, planHash, verifiedAt>
+- Landed: <local integration SHA, beforeSha, verifiedAt>
+- Push verified: <not-requested / not-observed / remote, ref, remoteSha, observedAt, authorization evidence>
+- Current stage: unverified/verified/landed/pushVerified
+- Stale older delivery records: <none or SHA list; never treated as current>
+
 Final leader review:
 - Objective satisfied: <yes/no>
 - Bugs or integration defects found: <summary or none>
