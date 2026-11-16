@@ -56,7 +56,9 @@ def evaluate_gate(gate, receipt, observation, now=None):
     if observation.get('gitSource') != 'leader_git' or observation.get('clean') is not True:
         reasons.append('git_observation_unverified')
     actual = observation.get('attachments')
-    if not isinstance(actual, list) or sorted(actual) != sorted(expected['attachments']):
+    if (not isinstance(actual, list)
+            or any(not isinstance(identity, str) or not identity.strip() for identity in actual)
+            or sorted(actual) != sorted(expected['attachments'])):
         reasons.append('attachments_mismatch')
     if observation.get('attachmentSource') != 'host_artifacts':
         reasons.append('attachments_unverified')

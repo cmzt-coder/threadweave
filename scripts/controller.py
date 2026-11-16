@@ -1039,6 +1039,11 @@ class Controller:
                 f'run is {self.state.get("status")}; create_worker blocked')
         if not self.state.get('authorization', {}).get('provenance'):
             raise RuntimeError('authorization provenance missing; create_worker blocked')
+        previous_error = self.state.get('lastCreateError', {})
+        if (previous_error.get('code') == 'create_timeout'
+                and previous_error.get('resultCertainty') == 'unknown'):
+            # 超时可能已经创建资源；重启或修改 prompt 都不能当成核对结果。
+            raise RuntimeError('unresolved creation timeout; reconcile before creating again')
         if getattr(self.adapter, 'capabilities', {}).get('queued_actions'):
             binding = self.adapter.dispatch_binding()
             if (self.state.get('runId') != self.run_id or binding.get('runId') != self.run_id
