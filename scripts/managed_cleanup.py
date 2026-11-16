@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from cleanup import cleanup_plan_fingerprint
 from cleanup_apply import preview
+from resource_provenance import normalize_artifacts
 
 
 def _object(value, label):
@@ -57,7 +58,7 @@ def recheck_managed_cleanup(declaration, approved, stop_receipt, inventory_recei
                 or turn.get('status') != 'completed' or not turn.get('id')
                 or final.get('turnId') != turn['id'] or final.get('phase') != 'final_answer'):
             raise ValueError('worker not freshly confirmed stopped')
-        matches = [a for a in _objects(inventory['artifacts'], 'artifacts') if a.get('type') == 'worktree'
+        matches = [a for a in normalize_artifacts(inventory) if a['kind'] == 'worktree'
                    and a.get('identityKey') == declaration['worktree']]
         if len(matches) != 1:
             raise ValueError('exact attached worktree identity missing or ambiguous')

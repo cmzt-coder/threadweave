@@ -23,6 +23,14 @@ a={**base,'operationId':'inventory','metadata':{'hostId':'local','result':{'arti
 def run(stop=s,inventory=a):return recheck_managed_cleanup(d,approved,stop,inventory,'thread')
 with patch('managed_cleanup.preview',return_value=approved):
  check('eligible-fixture',run()['status']=='eligible')
+ actual=copy.deepcopy(a);actual['metadata']['result']['artifacts'][0]['attachmentType']=actual['metadata']['result']['artifacts'][0].pop('type')
+ check('observed-host-type-field-supported',run(inventory=actual)['status']=='eligible')
+ unknown=copy.deepcopy(actual);unknown['metadata']['result']['artifacts'][0]['payload']={'hostId':'local','root':'/repo/worker','workspaceRoot':'/repo/worker'}
+ check('observed-host-payload-does-not-infer-ownership','host ownership/primary/shared' in run(inventory=unknown)['reason'])
+ conflicting=copy.deepcopy(actual);conflicting['metadata']['result']['artifacts'][0]['type']='archived_worktree'
+ check('conflicting-host-type-fields-blocked',run(inventory=conflicting)['status']=='blocked')
+ archived=copy.deepcopy(actual);archived['metadata']['result']['artifacts'][0]['attachmentType']='archived_worktree'
+ check('archived-attachment-not-active',run(inventory=archived)['status']=='blocked')
  for field,value in [('ownerThreadId','other'),('isPrimary',True),('isShared',True),('runId','other')]:
   bad=copy.deepcopy(a);bad['metadata']['result']['artifacts'][0]['payload'][field]=value
   check(field,run(inventory=bad)['status']=='blocked')
