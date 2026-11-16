@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cleanup import build_cleanup_plan
+from cleanup import build_cleanup_plan, recheck_cleanup_plan
 from delivery import delivery_status
 from next_actions import build_next_actions
 from status_view import build_compact_status, build_delta_status, compact_json
@@ -101,6 +101,19 @@ def cleanup_plan(repo, run_id, observations_path):
     return build_cleanup_plan(state, observations)
 
 
+def cleanup_recheck(repo, run_id, plan_path, observations_path,
+                    expected_fingerprint=None, max_evidence_age_seconds=300):
+    """读取批准的计划和新 observations，只读重验清理是否仍可执行。"""
+    state = read_state(run_state_path(repo, run_id))
+    plan = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    observations = json.loads(Path(observations_path).read_text(encoding='utf-8'))
+    if not isinstance(plan, dict) or not isinstance(observations, dict):
+        raise ValueError('plan and observations must be JSON objects')
+    return recheck_cleanup_plan(
+        state, plan, observations, expected_fingerprint=expected_fingerprint,
+        max_evidence_age_seconds=max_evidence_age_seconds)
+
+
 def next_plan(repo, run_id=None, observations_path=None):
     """读取状态与可选观察，输出只读恢复建议；不修改状态。"""
     repo = Path(repo)
@@ -159,6 +172,13 @@ def main(argv=None):
     p.add_argument('--repo', default='.')
     p.add_argument('--run', required=True)
     p.add_argument('--observations', required=True)
+    p = sub.add_parser('cleanup-recheck')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--run', required=True)
+    p.add_argument('--plan', required=True)
+    p.add_argument('--observations', required=True)
+    p.add_argument('--expected-fingerprint')
+    p.add_argument('--max-evidence-age-seconds', type=int, default=300)
     p = sub.add_parser('next')
     p.add_argument('--repo', default='.')
     p.add_argument('--run')
@@ -197,6 +217,15 @@ def main(argv=None):
         try:
             result = next_plan(args.repo, args.run, args.observations)
         except ValueError as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            return 2
+    elif args.command == 'cleanup-recheck':
+        try:
+            result = cleanup_recheck(
+                args.repo, args.run, args.plan, args.observations,
+                expected_fingerprint=args.expected_fingerprint,
+                max_evidence_age_seconds=args.max_evidence_age_seconds)
+        except (ValueError, OSError, TypeError) as exc:
             print(f'error: {exc}', file=sys.stderr)
             return 2
     else:

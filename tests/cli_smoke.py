@@ -4,13 +4,14 @@ import json
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from state_store import run_state_path, write_state_atomic  # noqa: E402
 from threadweave import cleanup_plan, doctor, inspect, main, preflight, status  # noqa: E402
+from cleanup import cleanup_plan_fingerprint  # noqa: E402
 
 results = []
 
@@ -66,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
     obs.write_text(json.dumps({
         'a#1': {
             'acceptance_verified': True,
+            'observedAt': '2026-11-16T00:00:00+08:00',
             'worktree': {
                 'worktree_exists': True, 'status_porcelain': '',
                 'unmerged_commits': False, 'worker_status': 'idle',
@@ -95,6 +97,33 @@ with tempfile.TemporaryDirectory(prefix='threadweave-cli-') as d:
                   'worktree': 'SAFE', 'branch': 'SAFE', 'stop_evidence': 'SAFE',
               },
           })
+    plan_path = d / 'cleanup-plan.json'
+    plan_path.write_text(json.dumps(plan), encoding='utf-8')
+    recheck_stdout = io.StringIO()
+    recheck_stderr = io.StringIO()
+    with redirect_stdout(recheck_stdout), redirect_stderr(recheck_stderr):
+        recheck_code = main([
+            'cleanup-recheck', '--repo', str(repo), '--run', 'run-2',
+            '--plan', str(plan_path), '--observations', str(obs),
+            '--expected-fingerprint', cleanup_plan_fingerprint(plan),
+            '--max-evidence-age-seconds', '999999999'])
+    recheck = json.loads(recheck_stdout.getvalue())
+    check('cleanup-recheck-cli-safe', recheck_code == 0 and recheck['status'] == 'eligible')
+    dirty_obs = json.loads(obs.read_text())
+    dirty_obs['a#1']['worktree']['status_porcelain'] = ' M a.txt'
+    obs.write_text(json.dumps(dirty_obs), encoding='utf-8')
+    dirty_stdout = io.StringIO()
+    dirty_stderr = io.StringIO()
+    with redirect_stdout(dirty_stdout), redirect_stderr(dirty_stderr):
+        dirty_code = main([
+            'cleanup-recheck', '--repo', str(repo), '--run', 'run-2',
+            '--plan', str(plan_path), '--observations', str(obs),
+            '--expected-fingerprint', cleanup_plan_fingerprint(plan),
+            '--max-evidence-age-seconds', '999999999'])
+    dirty_recheck = json.loads(dirty_stdout.getvalue())
+    check('cleanup-recheck-cli-drift',
+          dirty_code == 0 and dirty_recheck['status'] == 'blocked'
+          and dirty_recheck['planChanged'])
 
     bad_repo = d / 'not-git'
     bad_repo.mkdir()

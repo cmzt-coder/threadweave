@@ -164,3 +164,74 @@ def build_cleanup_plan(state, observations, max_evidence_age_seconds=None, now=N
             'resourceLevels': resource_levels,
         }
     return plan
+
+
+def cleanup_plan_fingerprint(plan):
+    """生成清理计划 canonical fingerprint，用于执行前漂移比较。"""
+    import hashlib
+    import json
+    text = json.dumps(plan, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':'), allow_nan=False)
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def recheck_cleanup_plan(state, initial_plan, observations,
+                         expected_fingerprint=None, max_evidence_age_seconds=300,
+                         now=None):
+    """执行前只读重验；不删除资源，也不把旧 fingerprint 当成持续安全保证。"""
+    if not isinstance(initial_plan, dict):
+        raise ValueError('initial_plan must be an object')
+    initial_fp = cleanup_plan_fingerprint(initial_plan)
+    fingerprints = {
+        'initial': initial_fp,
+        'expected': expected_fingerprint,
+    }
+    if expected_fingerprint is not None and expected_fingerprint != initial_fp:
+        return {
+            'status': 'blocked',
+            'readOnly': True,
+            'deletionPerformed': False,
+            'reason': 'expected fingerprint does not match the approved plan',
+            'fingerprints': fingerprints,
+            'planChanged': None,
+            'currentPlan': None,
+        }
+    current_plan = build_cleanup_plan(
+        state, observations, max_evidence_age_seconds=max_evidence_age_seconds,
+        now=now)
+    current_fp = cleanup_plan_fingerprint(current_plan)
+    classifications = {
+        key: value.get('classification')
+        for key, value in current_plan.items()
+        if isinstance(value, dict)
+    }
+    levels = set(classifications.values())
+    plan_changed = current_fp != initial_fp
+    if plan_changed:
+        status = 'blocked'
+        reason = 'cleanup plan changed since approval; re-plan and obtain authorization again'
+    elif 'BLOCKED' in levels:
+        status = 'blocked'
+        reason = 'current cleanup observation contains blocked resources'
+    elif 'REVIEW' in levels:
+        status = 'review'
+        reason = 'current cleanup observation requires fresh evidence or manual review'
+    else:
+        status = 'eligible'
+        reason = 'current plan is SAFE; explicit execution authorization is still required'
+    return {
+        'status': status,
+        'readOnly': True,
+        'deletionPerformed': False,
+        'executionApproved': status == 'eligible',
+        'requiresExplicitExecutionAuthorization': status == 'eligible',
+        'reason': reason,
+        'fingerprints': {
+            'initial': initial_fp,
+            'current': current_fp,
+            'expected': expected_fingerprint,
+        },
+        'planChanged': plan_changed,
+        'classifications': classifications,
+        'currentPlan': current_plan,
+    }

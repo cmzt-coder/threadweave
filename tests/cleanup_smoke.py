@@ -6,6 +6,8 @@ from pathlib import Path
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from cleanup import (  # noqa: E402
+    cleanup_plan_fingerprint,
+    recheck_cleanup_plan,
     build_cleanup_plan, classify_automation_cleanup, classify_branch_cleanup,
     classify_report_cleanup, classify_worktree_cleanup, verify_stop_evidence,
 )
@@ -167,6 +169,33 @@ blocked_observations = {
 }
 blocked_plan = build_cleanup_plan(state, blocked_observations)
 check('plan-blocked-dirty', blocked_plan['a#1']['classification'] == 'BLOCKED')
+fingerprint = cleanup_plan_fingerprint(plan)
+recheck = recheck_cleanup_plan(
+    state, plan, observations, expected_fingerprint=fingerprint,
+    max_evidence_age_seconds=None)
+check('recheck-safe-eligible', recheck['status'] == 'eligible')
+check('recheck-fingerprint', recheck['fingerprints']['initial'] == fingerprint)
+changed_observations = {
+    'a#1': {
+        'worktree': {**clean, 'status_porcelain': ' M a.txt'},
+        'acceptance_verified': True,
+        'report_archived': True,
+        'branch': {
+            'branch_exists': True, 'merged_into_integration': True,
+            'owned_by_run': True, 'checked_out': False,
+        },
+        'stop': {'thread_idle': True, 'final_answer_present': True, 'no_active_turn': True},
+    }
+}
+drifted = recheck_cleanup_plan(
+    state, plan, changed_observations, expected_fingerprint=fingerprint,
+    max_evidence_age_seconds=None)
+check('recheck-drift-blocked', drifted['status'] == 'blocked' and drifted['planChanged'])
+wrong_fingerprint = recheck_cleanup_plan(
+    state, plan, observations, expected_fingerprint='0' * 64,
+    max_evidence_age_seconds=None)
+check('recheck-wrong-fingerprint-blocked',
+      wrong_fingerprint['status'] == 'blocked' and not wrong_fingerprint['readOnly'] is False)
 
 print(json.dumps({
     'passed': len(results),
