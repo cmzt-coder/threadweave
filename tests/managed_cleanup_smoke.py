@@ -16,7 +16,7 @@ def rejected(n,f):
  except ValueError:checks.append(n)
  else:raise AssertionError(n)
 d={'runId':'run','worktree':'/repo/worker'}
-plan={'git':'exact'};approved={'plan':plan,'fingerprint':cleanup_plan_fingerprint(plan)}
+plan={'git':'exact','executionKind':'host_thread','threadId':'thread'};approved={'plan':plan,'fingerprint':cleanup_plan_fingerprint(plan)}
 base=dict(runId='run',role='a',attempt=1,taskRevision=0,source='desktop_tool_bridge',operationId='wait',observedAt=datetime.now(timezone.utc).isoformat())
 s={**base,'metadata':{'hostId':'local','result':{'polls':[{'thread':{'id':'thread','hostId':'local','status':{'type':'idle'}},'latestTurn':{'id':'turn','status':'completed'},'latestAssistantMessage':{'turnId':'turn','phase':'final_answer'}}]}}}
 a={**base,'operationId':'inventory','metadata':{'hostId':'local','result':{'artifacts':[{'type':'worktree','identityKey':'/repo/worker','payload':{'ownerThreadId':'thread','isPrimary':False,'isShared':False,'runId':'run'}}]}}}

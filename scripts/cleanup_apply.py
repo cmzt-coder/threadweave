@@ -105,8 +105,9 @@ def preview(declaration):
             raise CleanupBlocked('thread stop evidence incomplete')
     else:
         raise CleanupBlocked('explicit execution kind required')
-    plan = {'version': 1, 'declaration': d, 'integrationHead': integration,
+    plan = {'version': 2, 'declaration': d, 'integrationHead': integration,
             'evidenceSha256': hashlib.sha256(evidence_bytes).hexdigest(),
+            'executionKind': e['executionKind'], 'threadId': e.get('threadId'),
             'classification': 'SAFE', 'action': 'git worktree remove',
             'preserveBranch': True}
     return {'plan': plan, 'fingerprint': cleanup_plan_fingerprint(plan),
