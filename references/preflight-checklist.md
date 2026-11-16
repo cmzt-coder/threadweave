@@ -39,6 +39,10 @@ The preview reports write-set conflicts, serialized-resource conflicts, contract
 7. Record supported async status/resolution/cancellation operations, or synchronous-only behavior. Do not assume `pendingWorktreeId`, `clientThreadId`, `operationId` or any other field exists. An unexpected pending result with no supported resolver blocks progress and must be retained for follow-up.
 8. If the project needs environment preparation, require an explicit `setup` object in `threadweave.config.json`: argv array (no implicit shell), repository-relative cwd inside the worker, independent `timeoutSeconds`, `failurePolicy: block`, and `idempotent: true`. Never derive setup authorization from verify.json, never auto-copy `.env*`, and never reuse startup evidence after setup. Run setup, then recheck worker identity, branch, HEAD, common dir and clean status. Setup timeout and evidence age are separate limits.
 
+### Immutable artifact handoff
+
+When a later worker consumes an earlier worker artifact, archive exact files under the durable run directory and write a `handoff-manifest.json` binding run, producer role/attempt and source SHA/task revision, receiver, purpose, source path, archive path and SHA256. The consumer must verify the manifest identity and archived bytes before use. Same-name different-content artifacts must create a distinct immutable archive and must never overwrite an earlier one. Removing the producer worktree alone does not invalidate the archived artifact; missing or hash-mismatched archive entries do.
+
 ### Stable contract freeze
 
 When `threadweave.config.json` declares `stableContracts`, freeze the exact files in each worker before dispatch. Record their individual SHA256 values and a canonical contract hash. Before report acceptance and integration, re-hash the same paths. Any drift blocks with `contract_drift`; a leader approval must explicitly record the reason, update the freeze, clear old report/acceptance evidence, advance the task revision, and require a fresh dispatch. A missing declaration preserves legacy behavior and must not be reported as contract-verified.

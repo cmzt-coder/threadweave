@@ -51,6 +51,13 @@ Dependency map:
 Decision log:
 - <decision>
 
+Handoff artifacts:
+- Handoff ID / manifest path:
+- Producer role#attempt / source SHA / taskRevision:
+- Receiver / purpose:
+- Artifact source paths / archive paths / SHA256:
+- Consumer verification result / producer cleanup status:
+
 Contract freeze:
 - stableContracts / per-file SHA256 / contractHash:
 - Freeze time / worker branch / base SHA:

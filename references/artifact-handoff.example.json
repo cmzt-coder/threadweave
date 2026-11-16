@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261116-o09-example",
+  "producer": {
+    "role": "a",
+    "attempt": 1,
+    "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskRevision": 1
+  },
+  "receiver": {
+    "role": "b"
+  },
+  "purpose": "consumer input",
+  "artifacts": [
+    {
+      "sourcePath": "artifacts/result.json",
+      "archivePath": "artifacts/20261116-o09-example/0123456789abcdef0123456789abcdef/result.json",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size": 42
+    }
+  ],
+  "createdAt": "2026-11-16T00:00:00+08:00",
+  "handoffId": "handoff_0123456789abcdef01234567"
+}
