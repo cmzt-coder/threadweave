@@ -11,13 +11,14 @@ from desktop_bridge import (BridgeJournal, BridgePending, DesktopWriteBridgeAdap
                             digest, now)
 from state_store import StateError, read_state
 
+LIST_ARTIFACTS = 'mcp__codex_app__list_artifacts'
 WAIT = 'mcp__codex_app__wait_threads'
 CREATE_WORKTREE = 'mcp__codex_app__create_worktree'
 ATTACH_WORKTREE = 'mcp__codex_app__attach_worktree'
 WORKTREE_STATUS = 'mcp__codex_app__get_worktree_creation_status'
 ARCHIVE_WORKTREE = 'mcp__codex_app__archive_worktree'
 ARCHIVE_THREAD = 'mcp__codex_app__set_thread_archived'
-METHODS = {'wait': WAIT, 'create-worktree': CREATE_WORKTREE,
+METHODS = {'list-artifacts': LIST_ARTIFACTS, 'wait': WAIT, 'create-worktree': CREATE_WORKTREE,
            'attach-worktree': ATTACH_WORKTREE, 'worktree-status': WORKTREE_STATUS,
            'archive-worktree': ARCHIVE_WORKTREE, 'archive-thread': ARCHIVE_THREAD}
 
@@ -33,7 +34,10 @@ def _absolute(value):
 def validate_lifecycle_params(method, params):
     if not isinstance(params, dict):
         raise ValueError('lifecycle parameters must be an object')
-    if method == WAIT:
+    if method == LIST_ARTIFACTS:
+        if params != {}:
+            raise ValueError('list_artifacts only supports current caller attachments')
+    elif method == WAIT:
         if (set(params) != {'targets', 'timeoutMs'} or type(params['timeoutMs']) is not int
                 or not 0 <= params['timeoutMs'] <= 60000):
             raise ValueError('bounded wait requires integer timeoutMs in 0..60000')
@@ -79,7 +83,10 @@ def validate_lifecycle_metadata(method, params, metadata):
             or not isinstance(metadata['result'], dict) or not metadata['result']):
         raise ValueError('lifecycle raw result and local host required')
     result = metadata['result']
-    if method == WAIT:
+    if method == LIST_ARTIFACTS:
+        if not isinstance(result.get('artifacts'), list):
+            raise ValueError('artifact inventory requires artifacts array')
+    elif method == WAIT:
         if type(result.get('timedOut')) is not bool or not isinstance(result.get('polls'), list):
             raise ValueError('wait result requires timedOut and polls')
         targets = {t['threadId'] for t in params['targets']}
@@ -117,7 +124,7 @@ class DesktopLifecycleBridgeAdapter(DesktopWriteBridgeAdapter):
         self.archive_roots = tuple(archive_roots)
         self.archive_threads = tuple(archive_threads)
         self.wait_cursors = copy.deepcopy(wait_cursors or {})
-        self.capabilities.update(wait_threads=True, create_worktree=worktree_config is not None,
+        self.capabilities.update(list_artifacts=True, wait_threads=True, create_worktree=worktree_config is not None,
                                  attach_worktree=bool(attach_paths), archive_worktree=bool(archive_roots),
                                  archive_thread=bool(archive_threads), worktree_creation_status=True)
 
@@ -130,6 +137,9 @@ class DesktopLifecycleBridgeAdapter(DesktopWriteBridgeAdapter):
                 'source': response['source'], 'observedAt': response['observedAt'],
                 'requestSha': record['requestSha'], 'responseSha': record['responseSha'],
                 'toolResultSha': response['toolResultSha'], 'metadata': metadata}
+
+    def list_artifacts(self):
+        return self._lifecycle(LIST_ARTIFACTS, {})
 
     def wait_threads(self, thread_ids, timeout_seconds):
         if type(timeout_seconds) is not int or not 0 <= timeout_seconds <= 60:

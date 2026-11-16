@@ -47,6 +47,10 @@ class HostAdapter(ABC):
     def archive_worktree(self, root):
         """归档 worktree。"""
 
+    def list_artifacts(self):
+        """只读查询当前调用者附件；不把附件存在等同于所有权。"""
+        raise NotImplementedError('list_artifacts')
+
     def attach_worktree(self, path):
         """重新附加既有 managed worktree；旧适配器保持拒绝。"""
         raise NotImplementedError('attach_worktree')
