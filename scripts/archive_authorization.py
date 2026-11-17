@@ -196,6 +196,71 @@ def verify_envelope(manifest, envelope_result, *, now=None):
     return result
 
 
+def verify_envelope_for_archive(manifest, envelope_result, archive_observed_at):
+    """在归档完成后复算信封，不重新读取已被归档的 worktree。"""
+    if (not isinstance(envelope_result, dict)
+            or envelope_result.get('status') != 'envelope_prepared'
+            or not isinstance(envelope_result.get('envelope'), dict)
+            or envelope_result.get('authorizationFingerprint') != digest(envelope_result['envelope'])):
+        raise ValueError('authorization envelope integrity failure')
+    declaration = manifest.get('declaration')
+    approved = manifest.get('approvedPlan')
+    if not isinstance(declaration, dict) or not isinstance(approved, dict):
+        raise ValueError('declaration and approvedPlan required')
+    plan = approved.get('plan')
+    if not isinstance(plan, dict):
+        raise ValueError('approved plan required')
+    if plan.get('executionKind') != 'host_thread' or not isinstance(plan.get('threadId'), str):
+        raise ValueError('host_thread plan with exact threadId required')
+    worktree = declaration.get('worktree')
+    if not isinstance(worktree, str) or not Path(worktree).is_absolute():
+        raise ValueError('exact absolute worktree required')
+    binding = _binding({
+        'runId': declaration.get('runId'),
+        'role': manifest.get('role'),
+        'attempt': manifest.get('attempt'),
+        'taskRevision': manifest.get('taskRevision'),
+    }, 'authorization')
+    archive_request_sha = manifest.get('archiveRequestSha')
+    if not isinstance(archive_request_sha, str) or not SHA256.fullmatch(archive_request_sha):
+        raise ValueError('archiveRequestSha must be SHA256')
+    nonce = manifest.get('authorizationNonce')
+    if not isinstance(nonce, str) or not nonce.strip() or len(nonce) > 128:
+        raise ValueError('authorizationNonce required')
+    authorized_at = _stamp(manifest.get('authorizedAt'), 'authorizedAt')
+    expires_at = _stamp(manifest.get('expiresAt'), 'expiresAt')
+    if not 0 < (expires_at - authorized_at).total_seconds() <= MAX_TTL_SECONDS:
+        raise ValueError('authorization TTL must be 1..300 seconds')
+    archive_at = _stamp(archive_observed_at, 'archiveObservedAt')
+    if not authorized_at <= archive_at <= expires_at:
+        raise ValueError('archive observation outside authorization window')
+    expected = {
+        'version': 1,
+        'source': SOURCE,
+        'authorizationNonce': manifest.get('authorizationNonce'),
+        'authorizedAt': authorized_at.isoformat(),
+        'expiresAt': expires_at.isoformat(),
+        'binding': binding,
+        'threadId': plan.get('threadId'),
+        'worktree': worktree,
+        'cleanupPlanFingerprint': approved.get('fingerprint'),
+        'cleanupEvidenceSha256': plan.get('evidenceSha256'),
+        'integrationHead': plan.get('integrationHead'),
+        'stopReceiptSha256': digest(manifest.get('stopReceipt')),
+        'preInventoryReceiptSha256': digest(manifest.get('preInventoryReceipt')),
+        'archiveRequestSha': archive_request_sha,
+        'hostSignedIdentityVerified': False,
+        'userApprovalCryptographicallyVerified': False,
+        'cleanupEligible': False,
+    }
+    if envelope_result['envelope'] != expected:
+        raise ValueError('authorization envelope does not match archive-time inputs')
+    result = dict(envelope_result)
+    result.update(status='envelope_verified_for_archive', archiveObservedAt=archive_at.isoformat(),
+                  localAuthorizationBindingVerified=True)
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('build', 'verify'))

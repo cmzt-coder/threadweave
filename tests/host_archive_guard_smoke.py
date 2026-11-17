@@ -1,6 +1,7 @@
 """O16 host archive 完成审计的真实临时 Git/账本 fixture；不执行真实宿主调用。"""
 import copy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -12,6 +13,8 @@ project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from desktop_bridge import BridgePending, digest
 from desktop_lifecycle_bridge import DesktopLifecycleBridgeAdapter, complete_tool_result
+from archive_authorization import build_envelope
+from cleanup_apply import preview
 from host_archive_guard import PROTECTION_POLICY, verify_host_archive
 
 checks = []
@@ -80,8 +83,86 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
         }]
     }
     pre_path, _ = complete('pre-inventory', lambda a: a.list_artifacts(), active)
-    archive_path, archive_record = complete(
-        'archive', lambda a: a.archive_worktree(str(worktree)), {'type': 'queued'}, archive=True)
+    archive_item = adapter('archive', archive=True)
+    try:
+        archive_item.archive_worktree(str(worktree))
+    except BridgePending:
+        pass
+    else:
+        raise AssertionError('archive fixture must first prepare')
+    archive_item.journal.claim('archive')
+    archive_record = archive_item.journal.inspect('archive')
+    report = base / 'report.md'
+    report.write_text('accepted')
+    evidence_path = base / 'evidence.json'
+    authorization_time = datetime.now(timezone.utc)
+    evidence = {
+        'observedAt': authorization_time.isoformat(),
+        'runId': run,
+        'worktree': str(worktree),
+        'branch': 'codex/archive-guard',
+        'head': git(worktree, 'rev-parse', 'HEAD'),
+        'reportSha256': hashlib.sha256(report.read_bytes()).hexdigest(),
+        'ownedByRun': True,
+        'shared': False,
+        'acceptanceVerified': True,
+        'executionKind': 'host_thread',
+        'threadId': 'thread-guard',
+        'stop': {'threadIdle': True, 'finalAnswerPresent': True, 'noActiveTurn': True},
+    }
+    evidence_path.write_text(json.dumps(evidence))
+    declaration = {
+        'runId': run,
+        'repository': str(repo),
+        'worktree': str(worktree),
+        'branch': 'codex/archive-guard',
+        'head': evidence['head'],
+        'integrationRef': 'main',
+        'report': str(report),
+        'reportSha256': evidence['reportSha256'],
+        'evidence': str(evidence_path),
+    }
+    approved = preview(declaration)
+    pre_record = adapter('pre-inventory').journal.inspect('pre-inventory')
+    pre_receipt = {
+        'runId': run, 'role': 'a', 'attempt': 1, 'taskRevision': revision,
+        'source': pre_record['response']['source'], 'operationId': 'pre-inventory',
+        'observedAt': pre_record['response']['observedAt'],
+        'requestSha': pre_record['requestSha'],
+        'toolResultSha': pre_record['response']['toolResultSha'],
+        'metadata': pre_record['response']['metadata'],
+    }
+    stop_receipt = {
+        'runId': run, 'role': 'a', 'attempt': 1, 'taskRevision': revision,
+        'source': 'desktop_tool_bridge', 'operationId': 'wait-stop',
+        'observedAt': authorization_time.isoformat(),
+        'metadata': {'hostId': 'local', 'result': {'polls': [{
+            'thread': {'id': 'thread-guard', 'hostId': 'local', 'status': {'type': 'idle'}},
+            'latestTurn': {'id': 'turn-guard', 'status': 'completed'},
+            'latestAssistantMessage': {'turnId': 'turn-guard', 'phase': 'final_answer'},
+        }]}},
+    }
+    auth_manifest = {
+        'declaration': declaration,
+        'approvedPlan': approved,
+        'role': 'a',
+        'attempt': 1,
+        'taskRevision': revision,
+        'stopReceipt': stop_receipt,
+        'preInventoryReceipt': pre_receipt,
+        'archiveRequestSha': archive_record['requestSha'],
+        'authorizationNonce': 'host-guard-authorization',
+        'authorizedAt': authorization_time.isoformat(),
+        'expiresAt': (authorization_time + timedelta(seconds=120)).isoformat(),
+    }
+    auth_result = build_envelope(auth_manifest, now=authorization_time)
+    if auth_result['status'] != 'envelope_prepared':
+        raise AssertionError('authorization envelope setup failed')
+    archive_raw = {'content': [{'type': 'text', 'text': json.dumps({'type': 'queued'})}], 'isError': False}
+    archive_path = base / 'archive-raw.json'
+    archive_path.write_text(json.dumps(archive_raw))
+    complete_tool_result(archive_item.journal, 'archive', archive_raw)
+    archive_record = archive_item.journal.inspect('archive')
     git(repo, 'worktree', 'remove', str(worktree))
     archived = {
         'artifacts': [{
@@ -114,6 +195,8 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
         'expectedArchiveRequestSha': archive_record['requestSha'],
         'completionInventoryOperation': 'completion-inventory',
         'completionInventoryRaw': str(completion_path),
+        'requireAuthorization': True,
+        'authorization': {'manifest': auth_manifest, 'result': auth_result},
     }
 
     result = verify_host_archive(spec)
@@ -127,6 +210,9 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
     check('caller-continuity-not-claimed', result['callerContinuityVerified'] is False)
     check('approval-not-claimed', result['approvalBindingVerified'] is False)
     check('pre-inventory-shape-verified', result['preInventoryShapeVerified'] is True)
+    check('authorization-binding-verified', result['authorizationBindingVerified'] is True
+          and result['authorizationFingerprint'] == auth_result['authorizationFingerprint'])
+    check('host-identity-still-unverified', result['hostSignedIdentityVerified'] is False)
     check('unknown-ownership-preserved', result['unknown'] == [
         'ownerThreadId', 'isPrimary', 'isShared', 'callingThreadId'])
 
@@ -136,6 +222,11 @@ with tempfile.TemporaryDirectory(prefix='threadweave-archive-guard-') as td:
               and value['deletionPerformed'] is False)
 
     blocked('wrong-protection-policy', {**spec, 'protectionPolicy': 'payload-fields'})
+    blocked('missing-required-authorization', {**spec, 'authorization': None})
+    bad_auth_result = copy.deepcopy(auth_result)
+    bad_auth_result['authorizationFingerprint'] = '0' * 64
+    blocked('tampered-authorization', {**spec, 'authorization': {
+        'manifest': auth_manifest, 'result': bad_auth_result}})
     blocked('wrong-run-binding', {**spec, 'runId': 'other'})
     blocked('wrong-role-binding', {**spec, 'role': 'b'})
     blocked('wrong-attempt-binding', {**spec, 'attempt': 2})

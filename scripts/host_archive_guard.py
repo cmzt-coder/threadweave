@@ -8,6 +8,7 @@ import subprocess
 
 from desktop_bridge import BridgeJournal, digest
 from desktop_lifecycle_bridge import ARCHIVE_WORKTREE, LIST_ARTIFACTS
+from archive_authorization import verify_envelope_for_archive
 from resource_provenance import map_resource_provenance, normalize_artifacts, parse_raw_result
 from state_store import read_state
 
@@ -85,6 +86,10 @@ def verify_host_archive(spec, *, now=None):
         'protectionEnforcementVerified': False,
         'callerContinuityVerified': False,
         'approvalBindingVerified': False,
+        'authorizationBindingVerified': False,
+        'authorizationFingerprint': None,
+        'authorizationSource': None,
+        'hostSignedIdentityVerified': False,
         'preInventoryShapeVerified': False,
         'postArchiveTransitionObserved': False,
         'unknown': ['ownerThreadId', 'isPrimary', 'isShared', 'callingThreadId'],
@@ -130,6 +135,37 @@ def verify_host_archive(spec, *, now=None):
         # 仅为历史实证的宿主签发格式；queued 是受理，不是删除完成。
         if archive_result != {'type': 'queued'}:
             raise ValueError('unsupported or unsuccessful host archive result')
+
+        authorization = spec.get('authorization')
+        if authorization is None:
+            if spec.get('requireAuthorization') is True:
+                raise ValueError('authorization envelope required')
+        else:
+            if not isinstance(authorization, dict):
+                raise ValueError('authorization evidence must be an object')
+            manifest = authorization.get('manifest')
+            envelope_result = authorization.get('result')
+            if not isinstance(manifest, dict) or not isinstance(envelope_result, dict):
+                raise ValueError('authorization manifest/result required')
+            pre_receipt = manifest.get('preInventoryReceipt')
+            if (not isinstance(pre_receipt, dict)
+                    or pre_receipt.get('operationId') != spec['preInventoryOperation']
+                    or pre_receipt.get('requestSha') != provenance['proof']['inventoryRequestSha']
+                    or pre_receipt.get('toolResultSha') != provenance['proof']['inventoryToolResultSha']):
+                raise ValueError('authorization pre-inventory receipt mismatch')
+            verified_auth = verify_envelope_for_archive(
+                manifest, envelope_result, archive_record['response']['observedAt'])
+            envelope = verified_auth['envelope']
+            plan = manifest.get('approvedPlan', {}).get('plan', {})
+            if (envelope.get('binding') != binding
+                    or envelope.get('worktree') != worktree
+                    or envelope.get('threadId') != plan.get('threadId')
+                    or envelope.get('archiveRequestSha') != spec['expectedArchiveRequestSha']):
+                raise ValueError('authorization envelope resource/request mismatch')
+            result.update(
+                authorizationBindingVerified=True,
+                authorizationFingerprint=verified_auth['authorizationFingerprint'],
+                authorizationSource=envelope.get('source'))
 
         completion_record, completion = _operation(
             journal, spec['completionInventoryOperation'], spec['completionInventoryRaw'],
