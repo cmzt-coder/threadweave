@@ -8,6 +8,26 @@ Threadweave is a Codex skill that turns the current thread into a **leader** —
 
 This can only exist on Codex, because only Codex has first-class threads: `create_thread` spawns a real session with its own model settings, and threads talk to each other through `send_message_to_thread`. Workers are therefore real threads, not throwaway subagents — they keep their own context, run with their own settings (inheriting user-configured defaults unless explicitly overridden), can be messaged mid-flight, and can be archived and replaced if they stall. The skill refuses to fake the workflow with `spawn_agent`: if the thread tools aren't available, it names the missing capability and stops.
 
+## Project status (2026-11-17)
+
+Threadweave is currently an **advanced-user / internal engineering skill**, not a one-click
+general-purpose plugin. The local implementation, test suite and real-host positive archive
+path are usable, but the public product boundary remains intentionally conservative.
+
+- Local validation: 46 smoke suites / 1466 assertions pass.
+- Real host evidence: a dedicated managed worktree was archived through the Codex host
+  (`queued → archived_worktree`), with the directory and Git worktree registration removed.
+- Local thread continuity, an authorization envelope and an explicit guarded opt-in cleanup
+  path are implemented and tested.
+- O16 external evidence is frozen by request: host-signed identity, fresh owner mismatch,
+  shared/protected/submodule/embedded-Git negatives, and a real end-to-end run under a
+  pre-archive authorization envelope.
+- The default `execute_managed_cleanup` path remains strict; the guarded path is explicit
+  opt-in and does not silently broaden destructive authorization.
+
+Read the [product assessment](docs/Threadweave生产力插件评估.md), [O16 freeze record](docs/O16外部待办冻结记录.md),
+and [current todo state](docs/待办存档-2026-11-16.md) before using it in a real project.
+
 ## Built around the ways parallel agents actually fail
 
 Most of this skill is not "how to spawn threads." It's guardrails — one per failure mode.
@@ -79,6 +99,13 @@ Use $threadweave to split this task across two workers, each with its own worktr
 
 See the [usage guide](docs/usage-guide.md) for troubleshooting, recovery, and cleanup.
 
+Before the first real run, verify the target checkout:
+
+```bash
+python3 scripts/threadweave.py preflight --repo /path/to/repository
+python3 tests/run_all.py
+```
+
 ## Install
 
 Clone into your Codex skills directory as `threadweave`:
@@ -133,13 +160,27 @@ At runtime, a run also leaves `.threadweave/` at the repo root (git-excluded): t
 
 `SKILL.md` carries only what the leader needs at runtime; reusable prompts and report formats live in `references/` and are loaded per phase — worker-facing templates are sent verbatim, so edit them as contracts, not prose. Prefer small diffs over rewrites to keep template history reviewable, and never let a modified version simulate workers with temporary subagents.
 
-## First iteration and validation
+## Validation and current status
 
-See the [implementation plan](docs/第一轮执行闭环改造方案.md) and [validation record](docs/第一轮执行闭环验证记录.md) for scope, evidence and limitations; the [todo list](docs/项目待办清单.md) tracks full status and next steps. This iteration implements protocols, templates and local helper modules. Independent acceptance plans, structured report validation and write-set reservation are local helpers, not host guarantees: a branch or merge without an executed acceptance plan is recorded as unverified, never as passed, and a failed integration acceptance blocks later integrations until the leader re-verifies the current integration HEAD. Local Git and fake-adapter checks do not replace a real-thread smoke test.
+See the [implementation plan](docs/第一轮执行闭环改造方案.md), [validation record](docs/第一轮执行闭环验证记录.md),
+[current todo state](docs/待办存档-2026-11-16.md), and [O16 final boundary](docs/O16宿主保护负向矩阵与最终完成度评估.md).
+Local Git and fixture checks do not replace a real-thread smoke test; a branch or merge without
+an executed acceptance plan remains unverified. A failed integration acceptance blocks later
+integrations until the leader re-verifies the current integration HEAD.
 
 ## Desktop host bridge
 
-The desktop bridge supports persisted read, create and message requests, explicit leader execution and correlated result import. `DesktopBridgeAdapter` stays read-only; `DesktopWriteBridgeAdapter` enables creation with explicit model, reasoning and baseline configuration, plus message receipts. Async client IDs require reconciliation before use, and unresolved operations are never automatically repeated. A real single-worker create/startup/message/stop/cleanup probe has passed with `deepseek-flash` and `high`. Python does not connect to private sockets or execute host tools; full dual-worker acceptance and failure/recovery testing remain pending. See the [bridge guide and validation evidence](docs/真实宿主桥接接入与验收指南.md).
+The desktop bridge supports persisted read, create and message requests, explicit leader execution and correlated result import. `DesktopBridgeAdapter` stays read-only; `DesktopWriteBridgeAdapter` enables creation with explicit model, reasoning and baseline configuration, plus message receipts. Async client IDs require reconciliation before use, and unresolved operations are never automatically repeated. A real managed-worktree create/list/archive path and a local thread cwd repair have been recorded; host attachment/primary semantics still require version-specific validation. Python does not connect to private sockets or execute host tools. See the [bridge guide](docs/真实宿主桥接接入与验收指南.md), [O16 positive record](docs/O16宿主归档正向验收记录.md), and [O16 negative matrix](docs/O16宿主保护负向矩阵与最终完成度评估.md).
+
+## Known limitations
+
+- Real Codex thread/worktree tools are required; subagents are not a substitute.
+- Host APIs are version-sensitive and may change without notice.
+- O16 external host evidence is frozen pending signed identity and richer negative-resource scenarios.
+- H01 model/attachment retention and P0 multi-project/create-timeout/wait-missing paths still need
+  controlled host acceptance.
+- This is a Codex skill and Python helper suite, not a packaged standalone application or a
+  one-click end-user plugin.
 
 ## Local tests
 

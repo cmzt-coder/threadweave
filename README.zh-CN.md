@@ -8,6 +8,18 @@ Threadweave 是一个 Codex skill:当前线程担任 **leader**——负责规�
 
 这个 skill 只可能存在于 Codex,因为只有 Codex 把线程当作一等公民:`create_thread` 能创建带独立模型配置的真实会话,线程之间还能通过 `send_message_to_thread` 互发消息。所以 worker 是真实线程,而不是用完即弃的 subagent——它们保有自己的上下文、按自己的配置运行(默认继承用户配置,可显式覆盖)、可以中途沟通,卡死时还能归档换人。skill 拒绝用 `spawn_agent` 模拟这套流程:线程工具不可用时,它会指出缺哪个能力,然后停下。
 
+## 当前状态（2026-11-17）
+
+Threadweave 目前定位为 **面向高级用户/内部团队的 Codex 工程协作 skill**，不是一键式通用生产力插件。本地实现、测试和真实宿主正向归档路径已经可使用，但公开产品边界仍保持保守。
+
+- 本地验证：46 套 smoke 测试 / 1466 项断言通过。
+- 真实宿主证据：专用 managed worktree 已完成 `queued → archived_worktree`，目录和 Git worktree 注册均消失。
+- 已实现并测试本地 thread 连续性、归档授权信封和显式 opt-in 的安全清理路径。
+- O16 外部证据已按用户决定冻结：宿主签名身份、当前版本 owner mismatch、shared/protected/submodule/embedded Git 负例，以及预归档授权信封下的真实端到端验收。
+- 默认 `execute_managed_cleanup` 仍保持严格门禁；显式 guarded 路径不会静默扩大破坏性授权。
+
+真实使用前请先阅读 [生产力插件评估](docs/Threadweave生产力插件评估.md)、[O16 外部待办冻结记录](docs/O16外部待办冻结记录.md) 和 [当前待办状态](docs/待办存档-2026-11-16.md)。
+
 ## 针对并行 agent 的真实翻车方式而设计
 
 这个 skill 的主体不是"怎么开线程",而是护栏——每条对应一种失败模式。
@@ -79,6 +91,13 @@ git clone https://github.com/cmzt-coder/threadweave.git "${CODEX_HOME:-$HOME/.co
 
 故障排查、恢复与清理见 [使用教程](docs/使用教程.md)。
 
+第一次在真实项目运行前，先检查目标 checkout：
+
+```bash
+python3 scripts/threadweave.py preflight --repo /path/to/repository
+python3 tests/run_all.py
+```
+
 ## 安装
 
 克隆到 Codex skills 目录,命名为 `threadweave`:
@@ -133,13 +152,21 @@ threadweave/
 
 `SKILL.md` 只放 leader 运行时真正需要的内容;可复用的 prompt 和报告格式放在 `references/`,按阶段加载。面向 worker 的模板会被原文发送,所以把它们当契约改,而不是当散文改。改模板尽量用小 diff 而非推倒重写,保住可审查的历史;也永远别让改出来的版本用临时 subagent 冒充 worker。
 
-## 第一轮改造与验证
+## 当前验证状态
 
-实施范围见 [执行闭环方案](docs/第一轮执行闭环改造方案.md),实际通过项和限制见 [验证记录](docs/第一轮执行闭环验证记录.md),完整状态与后续计划见 [项目待办清单](docs/项目待办清单.md)。这一轮实现协议、模板与本地辅助模块;独立验收计划、结构化报告校验和写集预留都是本地辅助手段,不是宿主的强制保证——分支或合并若没有实际执行验收计划,只能记为未验证,不能记为通过;集成验收一旦失败,必须由 leader 在当前集成 HEAD 上重验通过才能解除阻断。本地 Git 与 fake adapter 检查不能替代真实线程冒烟验证。
+实施范围见 [执行闭环方案](docs/第一轮执行闭环改造方案.md)，实际通过项和限制见 [验证记录](docs/第一轮执行闭环验证记录.md)，当前状态见 [待办存档](docs/待办存档-2026-11-16.md)，O16 最终边界见 [宿主保护负向矩阵](docs/O16宿主保护负向矩阵与最终完成度评估.md)。本地 Git 与 fixture 检查不能替代真实线程冒烟；没有执行验收计划的分支或合并只能记为未验证。集成验收失败后，必须在当前集成 HEAD 上重新验证才能继续。
 
 ## 桌面宿主桥接
 
-已实现查询、创建和消息请求的持久化、leader 显式执行及关联回填。`DesktopBridgeAdapter` 保持只读；`DesktopWriteBridgeAdapter` 支持显式模型、thinking、基线配置的创建和消息回执。异步 client ID 核对成真实 threadId 后才能使用，未决操作禁止自动重试。真实单 worker 创建、启动、消息、停止和清理探针已通过，使用 `deepseek-flash · high`。Python 不连接私有 socket、不直接执行宿主工具；完整双 worker 验收及故障恢复链仍待完成。详见 [桥接接入与验收指南](docs/真实宿主桥接接入与验收指南.md)。
+已实现查询、创建和消息请求的持久化、leader 显式执行及关联回填。`DesktopBridgeAdapter` 保持只读；`DesktopWriteBridgeAdapter` 支持显式模型、thinking、基线配置的创建和消息回执。异步 client ID 核对成真实 threadId 后才能使用，未决操作禁止自动重试。真实 managed worktree 的 create/list/archive 路径和 Codex thread cwd 修复已经记录；宿主附件和 primary 语义仍需要按版本验证。Python 不连接私有 socket、不直接执行宿主工具。详见 [桥接接入与验收指南](docs/真实宿主桥接接入与验收指南.md)、[O16 正向归档记录](docs/O16宿主归档正向验收记录.md) 和 [O16 负向矩阵](docs/O16宿主保护负向矩阵与最终完成度评估.md)。
+
+## 已知限制
+
+- 必须使用真实 Codex thread/worktree 工具，不能用 subagent 替代。
+- 宿主 API 与版本强耦合，能力可能随版本变化。
+- O16 外部证据已冻结，需等待宿主签名身份和更完整的负向资源场景。
+- H01 的模型/附件保持、P0 的多 projectId/create timeout/wait 缺失仍需受控宿主验收。
+- 当前是 Codex skill 加 Python 辅助工具，不是独立桌面应用或一键安装的普通用户插件。
 
 ## 本地测试
 
