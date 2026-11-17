@@ -7,11 +7,15 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import Mock
 
 project = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project / 'scripts'))
 from archive_authorization import build_envelope, verify_envelope
 from cleanup_apply import preview
+from desktop_bridge import digest
+from desktop_lifecycle_bridge import ARCHIVE_WORKTREE
+from host_guarded_cleanup import execute_host_guarded_cleanup
 
 checks = []
 
@@ -161,6 +165,36 @@ with tempfile.TemporaryDirectory(prefix='threadweave-authorization-') as td:
     rejected('tampered-envelope', lambda: verify_envelope(manifest, tampered, now=stamp))
     rejected('verify-changed-manifest',
              lambda: verify_envelope({**manifest, 'archiveRequestSha': 'b' * 64}, result, now=stamp))
+
+    guarded_manifest = {**manifest, 'archiveRequestSha': digest({
+        'method': ARCHIVE_WORKTREE,
+        'binding': binding,
+        'params': {'root': str(worktree)},
+    })}
+    guarded_result = build_envelope(guarded_manifest, now=stamp)
+    adapter = Mock()
+    adapter.archive_worktree.return_value = {'type': 'queued'}
+    rejected('guarded-requires-explicit-authorization', lambda: execute_host_guarded_cleanup(
+        adapter, declaration, approved, stop, inventory, thread_id,
+        guarded_manifest, guarded_result, now=stamp))
+    check('guarded-no-call-without-authorization', not adapter.archive_worktree.called)
+    executed = execute_host_guarded_cleanup(
+        adapter, declaration, approved, stop, inventory, thread_id,
+        guarded_manifest, guarded_result, authorized=True, now=stamp)
+    check('guarded-host-call', adapter.archive_worktree.call_args.args == (str(worktree),)
+          and executed['status'] == 'host_result'
+          and executed['authorizationBindingVerified'] is True
+          and executed['cleanupEligible'] is False)
+    rejected('guarded-wrong-owner', lambda: execute_host_guarded_cleanup(
+        adapter, declaration, approved, stop, inventory, 'other-thread',
+        guarded_manifest, guarded_result, authorized=True, now=stamp))
+    rejected('guarded-wrong-inventory', lambda: execute_host_guarded_cleanup(
+        adapter, declaration, approved, stop, changed_inventory, thread_id,
+        guarded_manifest, guarded_result, authorized=True, now=stamp))
+    rejected('guarded-expired', lambda: execute_host_guarded_cleanup(
+        adapter, declaration, approved, stop, inventory, thread_id,
+        guarded_manifest, guarded_result, authorized=True,
+        now=stamp + timedelta(seconds=121)))
 
     manifest_path = base / 'manifest.json'
     envelope_path = base / 'envelope.json'
